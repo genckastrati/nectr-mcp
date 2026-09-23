@@ -1,0 +1,46 @@
+{
+  "name": "nectr-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for nectr: search, read and add to your nectr markdown library from any MCP client.",
+  "type": "module",
+  "bin": {
+    "nectr-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "nectr",
+    "markdown",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/genckastrati/nectr-mcp.git"
+  },
+  "homepage": "https://github.com/genckastrati/nectr-mcp#readme",
+  "bugs": "https://github.com/genckastrati/nectr-mcp/issues",
+  "license": "MIT"
+}
