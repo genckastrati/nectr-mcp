@@ -72,8 +72,10 @@ The server uses the same developer API as any other script, so your plan's limit
 
 ## Development
 
+Running the server needs Node 20+, but **developing needs Node 22.12 or newer** (Vitest and the MCP Inspector require it). CI uses Node 24.
+
 ```bash
-npm install
+npm ci                 # not `npm install`: installs exactly the lockfile and never rewrites it
 npm run typecheck
 npm test
 npm run build
@@ -81,6 +83,37 @@ NECTR_API_KEY=nct_... node dist/index.js   # speaks MCP over stdio
 ```
 
 The tests run against a fake nectr API (`test/fake-api.ts`) and through a real MCP client over an in-memory transport (`test/server.test.ts`).
+
+If `npm test` fails with **"Cannot find native binding"**, the `node_modules` folder was installed on another platform, for example inside a Linux container. `npm install` on top of it won't fix it. Delete `node_modules` and run `npm ci` again.
+
+### Trying it by hand with the MCP Inspector
+
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) calls the tools directly, without a model, and shows exactly what a model would receive. Build first (`npm run build`), then use its CLI mode. **Put the server command before the options.** With the options first, the Inspector reports "No servers found in config file".
+
+```powershell
+# PowerShell; in bash, use $NECTR_API_KEY instead of $k
+$k = "nct_your_key"
+
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/list
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name search_library
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name search_library --tool-arg query=pricing
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name get_page --tool-arg id=PAGE-ID
+```
+
+Add `-e NECTR_URL=http://localhost:8000` to test against a local nectr backend. Leave out `--cli` for the web interface; the argument order is the same.
+
+The Inspector's own dependencies need a newer Node than this server does. If it fails with **"Cannot find native binding"** after you upgrade Node, delete its cached copy from the npx cache (`%LocalAppData%\npm-cache\_npx` on Windows, `~/.npm/_npx` elsewhere) and run it again.
+
+The quickest sanity check needs no key at all: `npx -y nectr-mcp` should print "NECTR_API_KEY is not set" and exit.
+
+### Publishing
+
+```bash
+npm version patch      # or minor / major; also bump VERSION in src/server.ts and USER_AGENT in src/client.ts
+npm publish            # prepublishOnly runs typecheck, tests and build first
+```
+
+npm refuses to publish from an account without two-factor authentication (error `E403`). Enable it under your npm account settings; `npm publish` then asks you to confirm in the browser or with `--otp=<code>`.
 
 ## License
 
