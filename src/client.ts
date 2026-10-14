@@ -14,7 +14,6 @@ export interface Page {
   word_count: number;
   status: string;
   fetched_at: string;
-  project_id?: string | null;
   is_shareable?: boolean;
 }
 
@@ -37,12 +36,6 @@ export interface PageList {
   limit: number;
 }
 
-export interface Project {
-  id: string;
-  name: string;
-  slug: string;
-  conversion_count: number;
-}
 
 export interface Me {
   link_hash: string;
@@ -71,7 +64,7 @@ export class NectrUnreachableError extends Error {
 
 type Fetch = typeof fetch;
 
-const USER_AGENT = "nectr-mcp/0.1.0";
+const USER_AGENT = "nectr-mcp/0.2.0";
 const TIMEOUT_MS = 60_000; // a real crawl can take a while; reads are fast
 
 export class NectrClient {
@@ -97,16 +90,6 @@ export class NectrClient {
 
   convert(url: string, forceRefresh: boolean): Promise<SavedPage> {
     return this.request<SavedPage>("POST", "/conversions", { url, force_refresh: forceRefresh });
-  }
-
-  assignProject(id: string, projectId: string): Promise<void> {
-    return this.request<void>("PATCH", `/conversions/${encodeURIComponent(id)}/project`, {
-      project_id: projectId,
-    });
-  }
-
-  listProjects(): Promise<Project[]> {
-    return this.request<Project[]>("GET", "/projects");
   }
 
   me(): Promise<Me> {

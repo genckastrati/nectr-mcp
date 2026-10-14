@@ -1,6 +1,6 @@
 {
   "name": "nectr-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for nectr: search, read and add to your nectr markdown library from any MCP client.",
   "type": "module",
   "bin": {

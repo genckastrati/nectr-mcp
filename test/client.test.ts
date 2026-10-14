@@ -6,8 +6,8 @@ import { fakeApi, json, KEY, SITE } from "./fake-api.js";
 
 describe("NectrClient", () => {
   it("authenticates every request with the API key", async () => {
-    const { client, calls } = fakeApi({ "GET /projects": () => json(200, []) });
-    await client.listProjects();
+    const { client, calls } = fakeApi({ "GET /auth/me": () => json(200, { link_hash: "abc123" }) });
+    await client.me();
     expect(calls[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
     expect(calls[0]!.headers["user-agent"]).toMatch(/^nectr-mcp\//);
   });
@@ -32,9 +32,9 @@ describe("NectrClient", () => {
 
   it("carries status, detail and Retry-After on an API error", async () => {
     const { client } = fakeApi({
-      "GET /projects": () => json(429, { detail: "Too many requests" }, { "retry-after": "12" }),
+      "GET /auth/me": () => json(429, { detail: "Too many requests" }, { "retry-after": "12" }),
     });
-    const err = await client.listProjects().catch((e) => e);
+    const err = await client.me().catch((e) => e);
     expect(err).toBeInstanceOf(NectrApiError);
     expect(err.status).toBe(429);
     expect(err.retryAfterSeconds).toBe(12);
@@ -51,9 +51,9 @@ describe("NectrClient", () => {
 
   it("survives a non-JSON error page from a proxy", async () => {
     const { client } = fakeApi({
-      "GET /projects": () => new Response("<html>Bad gateway</html>", { status: 502, statusText: "Bad Gateway" }),
+      "GET /auth/me": () => new Response("<html>Bad gateway</html>", { status: 502, statusText: "Bad Gateway" }),
     });
-    const err = await client.listProjects().catch((e) => e);
+    const err = await client.me().catch((e) => e);
     expect(err.detail).toBe("Bad Gateway");
   });
 
@@ -62,7 +62,7 @@ describe("NectrClient", () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
     const client = new NectrClient(KEY, SITE, failing);
-    await expect(client.listProjects()).rejects.toBeInstanceOf(NectrUnreachableError);
+    await expect(client.me()).rejects.toBeInstanceOf(NectrUnreachableError);
   });
 });
 
