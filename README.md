@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), the markdown library for your LLMs.
 
-It lets a model **search** your library, **read** any saved page as clean markdown, **save** new pages, and **list** your projects. You don't need to paste links into the chat.
+It lets a model **search** your library, **read** any saved page as clean markdown, and **save** new pages. You don't need to paste links into the chat.
 
 - **Search:** a model can't guess your permalinks, but it can call `search_library("pricing page")`.
 - **Private pages:** pages you haven't shared have no working public link, but your key can still read them.
@@ -43,8 +43,7 @@ Node.js 20 or newer is required.
 |---|---|---|
 | `search_library(query?, limit?)` | Finds saved pages by title or URL. Returns ids, URLs, freshness and a two-sentence summary per page, but **not** the bodies. Leave out `query` to list the most recently refreshed pages. | no |
 | `get_page(id \| url, max_chars?)` | Returns the clean markdown of one page, with when it was last fetched. Long pages are cut off at 40,000 characters by default; ask for more with `max_chars`. | no |
-| `convert_url(url, project_id?, force_refresh?)` | Saves a web page, PDF or DOCX to your library, optionally filed under a project. Counts against your monthly conversion quota unless the page is already saved. | yes |
-| `list_projects()` | Lists your projects with page counts and each project's public `llms.txt` URL. | no |
+| `convert_url(url, force_refresh?)` | Saves a web page, PDF or DOCX to your library. Counts against your monthly conversion quota unless the page is already saved. | yes |
 
 There is deliberately **no delete**. A model that could delete your library by misreading a request isn't worth the convenience.
 

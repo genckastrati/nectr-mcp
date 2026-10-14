@@ -118,26 +118,15 @@ export async function getPage(
 
 export async function convertUrl(
   client: NectrClient,
-  args: { url: string; project_id?: string; force_refresh?: boolean },
+  args: { url: string; force_refresh?: boolean },
 ): Promise<CallToolResult> {
   try {
     const saved: SavedPage = await client.convert(args.url, args.force_refresh ?? false);
-    let projectLine = "";
-    if (args.project_id) {
-      try {
-        await client.assignProject(saved.id, args.project_id);
-        projectLine = `\nAdded to project ${args.project_id}.`;
-      } catch (err) {
-        // The page IS saved; say so rather than reporting the whole call as failed.
-        projectLine = `\nSaved, but could not add it to project ${args.project_id}: ${describeError(err)}`;
-      }
-    }
     const how = saved.cached ? "Already in the library (served the saved copy)" : "Saved";
     return text(
       `${how}: ${titleOf(saved)}\n` +
         `id: ${saved.id} · ${saved.word_count} words · fetched: ${saved.fetched_at}` +
         (saved.summary ? `\nsummary: ${saved.summary}` : "") +
-        projectLine +
         `\n\nnectr keeps this page current on the plan's refresh schedule. Read it with get_page("${saved.id}").`,
     );
   } catch (err) {
@@ -145,24 +134,6 @@ export async function convertUrl(
   }
 }
 
-export async function listProjects(client: NectrClient): Promise<CallToolResult> {
-  try {
-    const [projects, me] = await Promise.all([client.listProjects(), client.me()]);
-    if (projects.length === 0) return text("No projects yet. Projects are created in the nectr dashboard.");
-    const rows = projects.map(
-      (p) =>
-        `- ${p.name} (${plural(p.conversion_count, "page")})\n` +
-        `  id: ${p.id}\n` +
-        `  llms.txt: ${client.siteUrl}/p/${me.link_hash}/${p.slug}/llms.txt`,
-    );
-    return text(
-      `${plural(projects.length, "project")}:\n\n${rows.join("\n")}\n\n` +
-        "Each llms.txt is public and lists only the project's shareable pages.",
-    );
-  } catch (err) {
-    return failure(err);
-  }
-}
 
 // ── Registration ────────────────────────────────────────────────────────────
 
@@ -215,7 +186,6 @@ export function registerTools(server: McpServer, client: NectrClient): void {
         "Counts against the user's monthly conversion quota unless the page is already saved.",
       inputSchema: {
         url: z.url().describe("The http(s) URL to save."),
-        project_id: z.string().optional().describe("Optional project id (from list_projects) to file it under."),
         force_refresh: z
           .boolean()
           .optional()
@@ -224,16 +194,5 @@ export function registerTools(server: McpServer, client: NectrClient): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     (args) => convertUrl(client, args),
-  );
-
-  server.registerTool(
-    "list_projects",
-    {
-      title: "List nectr projects",
-      description: "List the user's nectr projects with their page counts and public llms.txt URLs.",
-      inputSchema: {},
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    () => listProjects(client),
   );
 }

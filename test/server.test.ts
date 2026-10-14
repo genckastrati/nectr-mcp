@@ -16,13 +16,12 @@ async function connect(routes: Parameters<typeof fakeApi>[0]) {
 }
 
 describe("MCP server", () => {
-  it("exposes the four v1 tools and nothing destructive", async () => {
+  it("exposes the three tools and nothing destructive", async () => {
     const client = await connect({});
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "convert_url",
       "get_page",
-      "list_projects",
       "search_library",
     ]);
     for (const tool of tools) {

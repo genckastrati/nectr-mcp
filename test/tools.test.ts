@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { convertUrl, getPage, listProjects, sameUrl, searchLibrary } from "../src/tools.js";
-import { fakeApi, json, page, SITE } from "./fake-api.js";
+import { convertUrl, getPage, sameUrl, searchLibrary } from "../src/tools.js";
+import { fakeApi, json, page } from "./fake-api.js";
 
 const textOf = (r: { content: Array<{ type: string; text?: string }> }) =>
   r.content.map((c) => c.text ?? "").join("");
@@ -103,23 +103,12 @@ describe("convert_url", () => {
     cached: false,
   };
 
-  it("saves the page and files it under a project", async () => {
-    const { client, calls } = fakeApi({
-      "POST /conversions": () => json(200, saved),
-      [`PATCH /conversions/${saved.id}/project`]: () => new Response(null, { status: 204 }),
-    });
-    const out = textOf(await convertUrl(client, { url: saved.url, project_id: "p1" }));
+  it("saves the page in one request", async () => {
+    const { client, calls } = fakeApi({ "POST /conversions": () => json(200, saved) });
+    const out = textOf(await convertUrl(client, { url: saved.url }));
+    expect(calls).toHaveLength(1);
     expect(calls[0]!.body).toEqual({ url: saved.url, force_refresh: false });
-    expect(calls[1]!.body).toEqual({ project_id: "p1" });
     expect(out).toContain("Saved: New page");
-    expect(out).toContain("Added to project p1");
-  });
-
-  it("still reports the save when filing it under the project fails", async () => {
-    const { client } = fakeApi({ "POST /conversions": () => json(200, saved) });
-    const result = await convertUrl(client, { url: saved.url, project_id: "missing" });
-    expect(result.isError).toBeUndefined();
-    expect(textOf(result)).toContain("Saved, but could not add it to project missing");
   });
 
   it("surfaces nectr's reason for an unreadable page as an error", async () => {
@@ -135,18 +124,6 @@ describe("convert_url", () => {
       "POST /conversions": () => json(402, { detail: "Monthly conversion limit reached (100/mo)." }),
     });
     expect(textOf(await convertUrl(client, { url: saved.url }))).toContain("Do not retry");
-  });
-});
-
-describe("list_projects", () => {
-  it("builds each project's public llms.txt URL", async () => {
-    const { client } = fakeApi({
-      "GET /projects": () => json(200, [{ id: "p1", name: "Docs", slug: "docs", conversion_count: 4 }]),
-      "GET /auth/me": () => json(200, { link_hash: "abc123" }),
-    });
-    const out = textOf(await listProjects(client));
-    expect(out).toContain(`${SITE}/p/abc123/docs/llms.txt`);
-    expect(out).toContain("1 project:");
   });
 });
 
