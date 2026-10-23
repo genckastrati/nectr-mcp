@@ -41,17 +41,28 @@ export function fakeApi(routes: Record<string, Route>) {
   return { client: new NectrClient(KEY, SITE, fetchImpl), calls };
 }
 
-export function page(overrides: Record<string, unknown> = {}) {
+/** A scan as nectr returns it to a key holder, with sensible defaults. */
+export function scanResult(overrides: Record<string, unknown> = {}) {
   return {
-    id: "11111111-1111-1111-1111-111111111111",
-    url: "https://example.com/docs/intro",
-    title: "Intro",
-    custom_title: null,
-    markdown_content: "# Intro\n\nThe body of the page.",
-    summary: "An introduction to the docs.",
-    word_count: 6,
-    status: "completed",
-    fetched_at: "2026-09-22T10:00:00Z",
+    url: "https://example.com/pricing",
+    title: "Pricing",
+    rendered_words: 420,
+    plain_words: 12,
+    rendered_markdown: "# Pricing\n\nPlans start at 9 a month.",
+    plain_markdown: "# Pricing\n\nLoading…",
+    markdown_tokens: 610,
+    html_tokens: 18_400,
+    only_with_javascript: ["Plans start at 9 a month.", "Compare every plan side by side."],
+    missing_word_share: 0.97,
+    robots_found: true,
+    robots: [
+      { agent: "GPTBot", allowed: false },
+      { agent: "ClaudeBot", allowed: true },
+    ],
+    pdfs: [],
+    pdfs_not_checked: 0,
+    scanned_at: "2026-10-23T20:00:00Z",
+    markdown_included: true,
     ...overrides,
   };
 }

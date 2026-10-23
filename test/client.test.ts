@@ -2,58 +2,49 @@ import { describe, expect, it } from "vitest";
 
 import { describeError, NectrApiError, NectrClient, NectrUnreachableError } from "../src/client.js";
 import { loadConfig } from "../src/config.js";
-import { fakeApi, json, KEY, SITE } from "./fake-api.js";
+import { fakeApi, json, KEY, SITE, scanResult } from "./fake-api.js";
 
 describe("NectrClient", () => {
   it("authenticates every request with the API key", async () => {
-    const { client, calls } = fakeApi({ "GET /auth/me": () => json(200, { link_hash: "abc123" }) });
-    await client.me();
+    const { client, calls } = fakeApi({ "POST /scans": () => json(200, scanResult()) });
+    await client.scan("https://example.com/pricing");
     expect(calls[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
-    expect(calls[0]!.headers["user-agent"]).toMatch(/^nectr-mcp\//);
+    expect(calls[0]!.headers["user-agent"]).toBe("nectr-mcp/0.3.0");
   });
 
-  it("sends the search term and limit as query parameters", async () => {
-    const { client, calls } = fakeApi({
-      "GET /conversions": () => json(200, { items: [], total: 0, page: 1, limit: 5 }),
-    });
-    await client.search("pricing page", 5);
-    const sent = new URL(`${SITE}${calls[0]!.path}`).searchParams;
-    expect(sent.get("search")).toBe("pricing page");
-    expect(sent.get("limit")).toBe("5");
-  });
-
-  it("omits the search parameter when there is no query", async () => {
-    const { client, calls } = fakeApi({
-      "GET /conversions": () => json(200, { items: [], total: 0, page: 1, limit: 10 }),
-    });
-    await client.search(undefined, 10);
-    expect(calls[0]!.path).not.toContain("search=");
+  it("asks for a scan of the URL and nothing else", async () => {
+    const { client, calls } = fakeApi({ "POST /scans": () => json(200, scanResult()) });
+    const scan = await client.scan("https://example.com/pricing");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.path).toBe("/scans");
+    expect(calls[0]!.body).toEqual({ url: "https://example.com/pricing" });
+    expect(scan.title).toBe("Pricing");
   });
 
   it("carries status, detail and Retry-After on an API error", async () => {
     const { client } = fakeApi({
-      "GET /auth/me": () => json(429, { detail: "Too many requests" }, { "retry-after": "12" }),
+      "POST /scans": () => json(429, { detail: "Too many requests" }, { "retry-after": "12" }),
     });
-    const err = await client.me().catch((e) => e);
+    const err = await client.scan("https://example.com").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(NectrApiError);
-    expect(err.status).toBe(429);
-    expect(err.retryAfterSeconds).toBe(12);
+    expect((err as NectrApiError).status).toBe(429);
+    expect((err as NectrApiError).retryAfterSeconds).toBe(12);
   });
 
   it("flattens FastAPI validation errors into one message", async () => {
     const { client } = fakeApi({
-      "POST /conversions": () =>
-        json(422, { detail: [{ msg: "Invalid URL" }, { msg: "Field required" }] }),
+      "POST /scans": () => json(422, { detail: [{ msg: "Invalid URL" }, { msg: "Field required" }] }),
     });
-    const err = await client.convert("x", false).catch((e) => e);
+    const err = (await client.scan("x").catch((e: unknown) => e)) as NectrApiError;
     expect(err.detail).toBe("Invalid URL; Field required");
   });
 
   it("survives a non-JSON error page from a proxy", async () => {
     const { client } = fakeApi({
-      "GET /auth/me": () => new Response("<html>Bad gateway</html>", { status: 502, statusText: "Bad Gateway" }),
+      "POST /scans": () => new Response("<html>Bad gateway</html>", { status: 502, statusText: "Bad Gateway" }),
     });
-    const err = await client.me().catch((e) => e);
+    const err = (await client.scan("https://example.com").catch((e: unknown) => e)) as NectrApiError;
     expect(err.detail).toBe("Bad Gateway");
   });
 
@@ -62,32 +53,34 @@ describe("NectrClient", () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
     const client = new NectrClient(KEY, SITE, failing);
-    await expect(client.me()).rejects.toBeInstanceOf(NectrUnreachableError);
+    await expect(client.scan("https://example.com")).rejects.toBeInstanceOf(NectrUnreachableError);
   });
 });
 
 describe("describeError", () => {
   // The contract that matters to a model is whether to retry. An opaque
-  // failure gets retried, which for a quota or a revoked key only burns the
-  // caller's rate limit.
+  // failure gets retried, which for a revoked key or a robots.txt refusal only
+  // burns the caller's rate limit.
   it.each([
-    [401, "rejected", /Do not retry/],
-    [402, "Monthly conversion limit reached (100/mo).", /Do not retry/],
-  ])("tells the model not to retry a %i", (status, detail, expected) => {
-    expect(describeError(new NectrApiError(status, detail))).toMatch(expected);
+    [401, "rejected"],
+    [403, "This site's robots.txt asks Nectrbot not to fetch this page."],
+  ])("tells the model not to retry a %i", (status, detail) => {
+    expect(describeError(new NectrApiError(status, detail))).toMatch(/Do not retry/);
+  });
+
+  it("passes nectr's reason through for a refused or unscannable page", () => {
+    const robots = "This site's robots.txt asks Nectrbot not to fetch this page.";
+    expect(describeError(new NectrApiError(403, robots))).toContain(robots);
+    const reason = "The page answered HTTP 404.";
+    expect(describeError(new NectrApiError(422, reason))).toContain(reason);
   });
 
   it("says how long to wait when rate limited", () => {
     expect(describeError(new NectrApiError(429, "x", 30))).toContain("Wait 30 seconds");
   });
 
-  it("says a busy converter is transient", () => {
+  it("says a busy scanner is transient", () => {
     expect(describeError(new NectrApiError(503, "busy", 5))).toContain("Retry in 5 seconds");
-  });
-
-  it("passes nectr's reason through for an unconvertible page", () => {
-    const reason = "This page appears to require signing in, so it could not be read.";
-    expect(describeError(new NectrApiError(422, reason))).toContain(reason);
   });
 });
 

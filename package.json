@@ -1,7 +1,7 @@
 {
   "name": "nectr-mcp",
-  "version": "0.2.0",
-  "description": "MCP server for nectr: search, read and add to your nectr markdown library from any MCP client.",
+  "version": "0.3.0",
+  "description": "MCP server for nectr: scan any public page the way AI reads it, from any MCP client.",
   "type": "module",
   "bin": {
     "nectr-mcp": "dist/index.js"
@@ -34,7 +34,9 @@
     "model-context-protocol",
     "nectr",
     "markdown",
-    "llm"
+    "llm",
+    "ai-crawlers",
+    "robots.txt"
   ],
   "repository": {
     "type": "git",
