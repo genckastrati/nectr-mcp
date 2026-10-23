@@ -63,7 +63,7 @@ export class NectrUnreachableError extends Error {
 
 type Fetch = typeof fetch;
 
-const USER_AGENT = "nectr-mcp/0.3.0";
+const USER_AGENT = "nectr-mcp/0.3.1";
 // A scan fetches the page twice (a browser and plain HTTP) and checks linked
 // PDFs, so it can take a while.
 const TIMEOUT_MS = 90_000;
