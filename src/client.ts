@@ -1,45 +1,44 @@
 /**
  * A thin client over the public nectr API (`/api/v1`), authenticated with an
- * `nct_` API key. Every endpoint used here is the same one the developer API
- * documents; this package adds no new server-side surface.
+ * `nct_` API key. It uses the scan endpoint the developer API documents
+ * (nectr.ch/docs#scan); this package adds no new server-side surface.
  */
 
-export interface Page {
-  id: string;
+export interface RobotsRule {
+  agent: string;
+  allowed: boolean;
+}
+
+export interface PdfCheck {
+  url: string;
+  pages: number | null;
+  words: number | null;
+  /** Null when the PDF wasn't checked; `note` then says why. */
+  has_text: boolean | null;
+  note: string | null;
+}
+
+/** One scan, as `POST /api/v1/scans` returns it to a key holder. */
+export interface Scan {
   url: string;
   title: string | null;
-  custom_title?: string | null;
-  markdown_content: string;
-  summary?: string | null;
-  word_count: number;
-  status: string;
-  fetched_at: string;
-  is_shareable?: boolean;
-}
-
-export interface SavedPage {
-  id: string;
-  url: string;
-  title: string | null;
-  custom_title?: string | null;
-  summary?: string | null;
-  word_count: number;
-  status: string;
-  fetched_at: string;
-  cached: boolean;
-}
-
-export interface PageList {
-  items: Page[];
-  total: number;
-  page: number;
-  limit: number;
-}
-
-
-export interface Me {
-  link_hash: string;
-  plan?: string | null;
+  rendered_words: number;
+  plain_words: number;
+  /** The page as markdown after JavaScript runs, and without it. Null only without a key. */
+  rendered_markdown: string | null;
+  plain_markdown: string | null;
+  markdown_tokens: number;
+  html_tokens: number;
+  /** Blocks of the rendered page whose words are nowhere in the plain HTML (at most 50). */
+  only_with_javascript: string[];
+  /** Words in those blocks over words in the rendered page, 0 to 1. */
+  missing_word_share: number;
+  robots_found: boolean;
+  robots: RobotsRule[];
+  pdfs: PdfCheck[];
+  pdfs_not_checked: number;
+  scanned_at: string;
+  markdown_included: boolean;
 }
 
 /** An HTTP error from nectr, carrying what a caller needs to explain it. */
@@ -64,8 +63,10 @@ export class NectrUnreachableError extends Error {
 
 type Fetch = typeof fetch;
 
-const USER_AGENT = "nectr-mcp/0.2.0";
-const TIMEOUT_MS = 60_000; // a real crawl can take a while; reads are fast
+const USER_AGENT = "nectr-mcp/0.3.0";
+// A scan fetches the page twice (a browser and plain HTTP) and checks linked
+// PDFs, so it can take a while.
+const TIMEOUT_MS = 90_000;
 
 export class NectrClient {
   private readonly api: string;
@@ -78,22 +79,8 @@ export class NectrClient {
     this.api = `${siteUrl}/api/v1`;
   }
 
-  search(query: string | undefined, limit: number): Promise<PageList> {
-    const params = new URLSearchParams({ page: "1", limit: String(limit) });
-    if (query) params.set("search", query);
-    return this.request<PageList>("GET", `/conversions?${params}`);
-  }
-
-  getPage(id: string): Promise<Page> {
-    return this.request<Page>("GET", `/conversions/${encodeURIComponent(id)}`);
-  }
-
-  convert(url: string, forceRefresh: boolean): Promise<SavedPage> {
-    return this.request<SavedPage>("POST", "/conversions", { url, force_refresh: forceRefresh });
-  }
-
-  me(): Promise<Me> {
-    return this.request<Me>("GET", "/auth/me");
+  scan(url: string): Promise<Scan> {
+    return this.request<Scan>("POST", "/scans", { url });
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -163,18 +150,15 @@ export function describeError(err: unknown): string {
   switch (err.status) {
     case 401:
       return "The nectr API key was rejected — it is invalid or has been revoked. Do not retry; the user needs to create a new key in nectr under Settings → API keys.";
-    case 402:
-      return `Over the nectr plan's quota: ${err.detail} Do not retry until the quota resets or the plan is upgraded.`;
     case 403:
-      return `nectr refused this request: ${err.detail}`;
-    case 404:
-      return "Not found in this nectr library. It may have been deleted, or the id is wrong.";
+      // A robots.txt that keeps nectr out, or scans closed to this account.
+      return `nectr will not scan this page: ${err.detail} Do not retry.`;
     case 422:
-      return `nectr could not convert this page: ${err.detail}`;
+      return `nectr could not scan this page: ${err.detail}`;
     case 429:
       return `Rate limited by nectr. Wait ${wait ?? 60} seconds before trying again.`;
     case 503:
-      return `nectr is busy converting other pages. Retry in ${wait ?? 5} seconds.`;
+      return `nectr is busy scanning other pages. Retry in ${wait ?? 5} seconds.`;
     default:
       return err.status >= 500
         ? `nectr had a server error (${err.status}). Try again later.`

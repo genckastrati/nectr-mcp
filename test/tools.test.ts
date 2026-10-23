@@ -1,139 +1,119 @@
 import { describe, expect, it } from "vitest";
 
-import { convertUrl, getPage, sameUrl, searchLibrary } from "../src/tools.js";
-import { fakeApi, json, page } from "./fake-api.js";
+import { DEFAULT_MAX_CHARS, JS_BLOCKS_SHOWN, scanPage } from "../src/tools.js";
+import { fakeApi, json, scanResult } from "./fake-api.js";
 
-const textOf = (r: { content: Array<{ type: string; text?: string }> }) =>
-  r.content.map((c) => c.text ?? "").join("");
+const URL_ = "https://example.com/pricing";
 
-const listOf = (...items: unknown[]) => () =>
-  json(200, { items, total: items.length, page: 1, limit: 10 });
+async function scanned(overrides: Record<string, unknown> = {}, args: Record<string, unknown> = {}) {
+  const { client } = fakeApi({ "POST /scans": () => json(200, scanResult(overrides)) });
+  const result = await scanPage(client, { url: URL_, ...args });
+  return { result, out: (result.content[0] as { text: string }).text };
+}
 
-describe("search_library", () => {
-  it("returns ids and summaries, never page bodies", async () => {
+describe("scan_page", () => {
+  it("leads with the findings and ends with the whole page as markdown", async () => {
+    const { result, out } = await scanned();
+    expect(result.isError).toBeUndefined();
+    const order = ["# Pricing", "## Size", "## robots.txt", "## Only with JavaScript", "## The page as markdown"];
+    const at = order.map((h) => out.indexOf(h));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(out.trimEnd().endsWith("Plans start at 9 a month.")).toBe(true);
+  });
+
+  it("gives the size in words and tokens, against the raw HTML", async () => {
+    const { out } = await scanned();
+    expect(out).toContain("420 words, ≈ 610 tokens");
+    expect(out).toContain("raw HTML an agent receives when it fetches the URL: ≈ 18,400 tokens");
+    expect(out).toContain("Without JavaScript: 12 words");
+  });
+
+  it("says which AI crawlers robots.txt allows", async () => {
+    const { out } = await scanned();
+    expect(out).toContain("- GPTBot: blocked");
+    expect(out).toContain("- ClaudeBot: allowed");
+  });
+
+  it("says a missing robots.txt allows every crawler", async () => {
+    const { out } = await scanned({ robots_found: false, robots: [] });
+    expect(out).toContain("no robots.txt, so every crawler may fetch this page");
+  });
+
+  it("lists what only appears with JavaScript, and its share", async () => {
+    const { out } = await scanned();
+    expect(out).toContain("97% of the page's words appear only after JavaScript runs, in 2 blocks");
+    expect(out).toContain("- Compare every plan side by side.");
+  });
+
+  it("caps the JavaScript-only blocks and says how many more there are", async () => {
+    const blocks = Array.from({ length: JS_BLOCKS_SHOWN + 5 }, (_, i) => `Block number ${i}`);
+    const { out } = await scanned({ only_with_javascript: blocks });
+    expect(out).toContain(`- Block number ${JS_BLOCKS_SHOWN - 1}`);
+    expect(out).not.toContain(`- Block number ${JS_BLOCKS_SHOWN}\n`);
+    expect(out).toContain("…and 5 more.");
+  });
+
+  it("says when nothing depends on JavaScript", async () => {
+    const { out } = await scanned({ only_with_javascript: [], missing_word_share: 0 });
+    expect(out).toContain("Nothing: an agent that doesn't run JavaScript gets the same text.");
+  });
+
+  it("reports linked PDFs, including a scanned image with no text", async () => {
+    const { out } = await scanned({
+      pdfs: [
+        { url: "https://example.com/menu.pdf", pages: 2, words: 310, has_text: true, note: null },
+        { url: "https://example.com/scan.pdf", pages: 4, words: 0, has_text: false, note: null },
+        { url: "https://example.com/big.pdf", pages: null, words: null, has_text: null, note: "nectr was busy" },
+      ],
+      pdfs_not_checked: 2,
+    });
+    expect(out).toContain("- https://example.com/menu.pdf: 2 pages, 310 words in the first pages, has text");
+    expect(out).toContain("- https://example.com/scan.pdf: 4 pages, 0 words in the first pages, no text layer");
+    expect(out).toContain("- https://example.com/big.pdf: not checked (nectr was busy)");
+    expect(out).toContain("2 more linked PDFs not checked");
+  });
+
+  it("leaves out the PDF section when the page links none", async () => {
+    const { out } = await scanned();
+    expect(out).not.toContain("## Linked PDFs");
+  });
+
+  it("can return the markdown without JavaScript instead, or none", async () => {
+    const plain = (await scanned({}, { markdown: "without_javascript" })).out;
+    expect(plain).toContain("## The page as markdown, without JavaScript\n# Pricing\n\nLoading…");
+    const none = (await scanned({}, { markdown: "none" })).out;
+    expect(none).not.toContain("## The page as markdown");
+    expect(none).toContain("## robots.txt");
+  });
+
+  it("truncates a long page and says how to get the rest", async () => {
+    const body = "x".repeat(DEFAULT_MAX_CHARS + 500);
+    const { out } = await scanned({ rendered_markdown: body });
+    expect(out).toContain(`showing 40,000 of ${(DEFAULT_MAX_CHARS + 500).toLocaleString("en")} characters`);
+    expect(out).toContain("larger max_chars");
+    const wider = (await scanned({ rendered_markdown: body }, { max_chars: DEFAULT_MAX_CHARS + 500 })).out;
+    expect(wider).not.toContain("Truncated");
+  });
+
+  it("says so when nectr sent no markdown", async () => {
+    const { out } = await scanned({ markdown_included: false, rendered_markdown: null, plain_markdown: null });
+    expect(out).toContain("nectr didn't include the markdown with this scan.");
+  });
+
+  it("falls back to the URL when the page has no title", async () => {
+    const { out } = await scanned({ title: null });
+    expect(out.startsWith(`# ${URL_}`)).toBe(true);
+  });
+
+  it("surfaces a robots.txt refusal as an error not to retry", async () => {
     const { client } = fakeApi({
-      "GET /conversions": listOf(page({ markdown_content: "SECRET BODY TEXT" })),
+      "POST /scans": () => json(403, { detail: "This site's robots.txt asks Nectrbot not to fetch this page." }),
     });
-    const out = textOf(await searchLibrary(client, { query: "intro" }));
-    expect(out).toContain("11111111-1111-1111-1111-111111111111");
-    expect(out).toContain("An introduction to the docs.");
-    expect(out).not.toContain("SECRET BODY TEXT");
-  });
-
-  it("prefers the owner's custom title", async () => {
-    const { client } = fakeApi({ "GET /conversions": listOf(page({ custom_title: "My name" })) });
-    expect(textOf(await searchLibrary(client, {}))).toContain("1. My name");
-  });
-
-  it("flags pages that have no content", async () => {
-    const { client } = fakeApi({ "GET /conversions": listOf(page({ status: "unreadable" })) });
-    expect(textOf(await searchLibrary(client, {}))).toContain("UNREADABLE");
-  });
-
-  it("points at convert_url when nothing matches", async () => {
-    const { client } = fakeApi({ "GET /conversions": listOf() });
-    expect(textOf(await searchLibrary(client, { query: "nope" }))).toContain("convert_url");
-  });
-
-  it("clamps an oversized limit", async () => {
-    const { client, calls } = fakeApi({ "GET /conversions": listOf() });
-    await searchLibrary(client, { limit: 500 });
-    expect(calls[0]!.path).toContain("limit=25");
-  });
-});
-
-describe("get_page", () => {
-  const id = "11111111-1111-1111-1111-111111111111";
-
-  it("reads by id with its freshness", async () => {
-    const { client } = fakeApi({ [`GET /conversions/${id}`]: () => json(200, page()) });
-    const out = textOf(await getPage(client, { id }));
-    expect(out).toContain("fetched: 2026-09-22T10:00:00Z");
-    expect(out).toContain("The body of the page.");
-  });
-
-  it("resolves a URL to the exact saved page, not a near miss", async () => {
-    const near = page({ id: "near", url: "https://example.com/docs/intro-v2" });
-    const exact = page({ url: "https://example.com/docs/intro/" });
-    const { client, calls } = fakeApi({
-      "GET /conversions": listOf(near, exact),
-      [`GET /conversions/${id}`]: () => json(200, page()),
-    });
-    await getPage(client, { url: "https://EXAMPLE.com/docs/intro" });
-    expect(calls.at(-1)!.path).toBe(`/conversions/${id}`);
-  });
-
-  it("says when a URL is not in the library", async () => {
-    const { client } = fakeApi({ "GET /conversions": listOf() });
-    expect(textOf(await getPage(client, { url: "https://unknown.example" }))).toContain("convert_url");
-  });
-
-  it("truncates a long body and says how to get the rest", async () => {
-    const body = "~".repeat(5_000); // a character the metadata line cannot contain
-    const { client } = fakeApi({
-      [`GET /conversions/${id}`]: () => json(200, page({ markdown_content: body })),
-    });
-    const out = textOf(await getPage(client, { id, max_chars: 1_000 }));
-    expect(out).toContain("Truncated: showing 1000 of 5000 characters");
-    expect(out.match(/~/g)!.length).toBe(1_000);
-  });
-
-  it("does not present an unreadable page as content", async () => {
-    const { client } = fakeApi({
-      [`GET /conversions/${id}`]: () => json(200, page({ status: "unreadable", markdown_content: "" })),
-    });
-    expect(textOf(await getPage(client, { id }))).toContain("no readable content");
-  });
-
-  it("requires an id or a url", async () => {
-    const { client } = fakeApi({});
-    expect((await getPage(client, {})).isError).toBe(true);
-  });
-});
-
-describe("convert_url", () => {
-  const saved = {
-    id: "22222222-2222-2222-2222-222222222222",
-    url: "https://example.com/new",
-    title: "New page",
-    summary: "What it is.",
-    word_count: 300,
-    status: "completed",
-    fetched_at: "2026-09-23T09:00:00Z",
-    cached: false,
-  };
-
-  it("saves the page in one request", async () => {
-    const { client, calls } = fakeApi({ "POST /conversions": () => json(200, saved) });
-    const out = textOf(await convertUrl(client, { url: saved.url }));
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.body).toEqual({ url: saved.url, force_refresh: false });
-    expect(out).toContain("Saved: New page");
-  });
-
-  it("surfaces nectr's reason for an unreadable page as an error", async () => {
-    const reason = "This page appears to require signing in, so it could not be read.";
-    const { client } = fakeApi({ "POST /conversions": () => json(422, { detail: reason }) });
-    const result = await convertUrl(client, { url: "https://intranet.example" });
+    const result = await scanPage(client, { url: URL_ });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain(reason);
-  });
-
-  it("tells the model not to retry when over quota", async () => {
-    const { client } = fakeApi({
-      "POST /conversions": () => json(402, { detail: "Monthly conversion limit reached (100/mo)." }),
-    });
-    expect(textOf(await convertUrl(client, { url: saved.url }))).toContain("Do not retry");
-  });
-});
-
-describe("sameUrl", () => {
-  it.each([
-    ["https://example.com/a/", "https://EXAMPLE.com/a", true],
-    ["https://example.com/a#top", "https://example.com/a", true],
-    ["https://example.com/a", "https://example.com/ab", false],
-    ["https://example.com/a?x=1", "https://example.com/a", false],
-  ])("%s vs %s → %s", (a, b, expected) => {
-    expect(sameUrl(a, b)).toBe(expected);
+    const out = (result.content[0] as { text: string }).text;
+    expect(out).toContain("robots.txt asks Nectrbot");
+    expect(out).toContain("Do not retry");
   });
 });

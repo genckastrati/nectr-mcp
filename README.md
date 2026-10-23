@@ -1,13 +1,10 @@
 # nectr-mcp
 
-An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), the markdown library for your LLMs.
+An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), which shows how AI reads a web page.
 
-It lets a model **search** your library, **read** any saved page as clean markdown, and **save** new pages. You don't need to paste links into the chat.
+It gives a model one tool, `scan_page`. Given a public page's address, it returns the page as clean markdown and what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, and the text that only appears after JavaScript runs.
 
-- **Search:** a model can't guess your permalinks, but it can call `search_library("pricing page")`.
-- **Private pages:** pages you haven't shared have no working public link, but your key can still read them.
-- **Saving:** "save these docs and keep them current" becomes one step, and nectr re-crawls them on your plan's schedule.
-- **Freshness:** every read says when the page was last fetched.
+> **Coming from 0.2?** The library tools (`search_library`, `get_page`, `convert_url`) are gone. Your existing `nct_` key works with `scan_page`.
 
 ## Setup
 
@@ -28,7 +25,7 @@ It lets a model **search** your library, **read** any saved page as clean markdo
 }
 ```
 
-3. Restart the client. The four tools below should appear.
+3. Restart the client. The `scan_page` tool should appear.
 
 Node.js 20 or newer is required.
 
@@ -37,29 +34,33 @@ Node.js 20 or newer is required.
 | `NECTR_API_KEY` | yes | — | Your `nct_` API key |
 | `NECTR_URL` | no | `https://nectr.ch` | The nectr site to talk to, for a self-hosted instance |
 
-## Tools
+## The tool
 
-| Tool | What it does | Writes? |
-|---|---|---|
-| `search_library(query?, limit?)` | Finds saved pages by title or URL. Returns ids, URLs, freshness and a two-sentence summary per page, but **not** the bodies. Leave out `query` to list the most recently refreshed pages. | no |
-| `get_page(id \| url, max_chars?)` | Returns the clean markdown of one page, with when it was last fetched. Long pages are cut off at 40,000 characters by default; ask for more with `max_chars`. | no |
-| `convert_url(url, force_refresh?)` | Saves a web page, PDF or DOCX to your library. Counts against your monthly conversion quota unless the page is already saved. | yes |
+`scan_page(url, markdown?, max_chars?)` fetches the page twice, with a browser and as plain HTTP, the way AI crawlers do, and returns:
 
-There is deliberately **no delete**. A model that could delete your library by misreading a request isn't worth the convenience.
+| Section | What it says |
+|---|---|
+| Size | Words and estimated tokens of the whole page as markdown, against the raw HTML an agent receives, and the words left without JavaScript |
+| robots.txt | Whether GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, PerplexityBot, Google-Extended and CCBot may fetch the page |
+| Linked PDFs | Up to 3 PDFs on the same site: pages, words, and whether there's a text layer at all |
+| Only with JavaScript | The share of words an agent misses without JavaScript, and the first 10 of those blocks |
+| Markdown | The page as markdown, last. `markdown` picks `"full"` (after JavaScript runs, the default), `"without_javascript"` or `"none"`. It's cut at 40,000 characters unless you raise `max_chars` |
 
-Search returns summaries rather than bodies so that looking around your library doesn't fill the model's context. It reads a full page only when it chooses to.
+The tool is read-only: nectr stores nothing from a scan. nectr honours the site's robots.txt for itself, so a page whose robots.txt keeps nectr out isn't fetched.
+
+The full response, field by field, is in the [scan API documentation](https://nectr.ch/docs#scan).
 
 ## Limits and errors
 
-The server uses the same developer API as any other script, so your plan's limits apply unchanged. Errors are worded so a model knows whether to retry:
+The server uses the same developer API as any other script, so the API's limits apply: 10 scans a minute from one IP address. Errors are worded so a model knows whether to retry:
 
 | nectr says | The model is told |
 |---|---|
 | 401: the key is invalid or revoked | Don't retry; you need a new key |
-| 402: over the monthly quota | Don't retry until the quota resets |
-| 422: the page can't be read (for example, it's behind a login) | nectr's reason, as given |
+| 403: robots.txt keeps nectr out, or scans aren't open to the account | nectr's reason; don't retry |
+| 422: the page can't be scanned (not public, not found, a PDF) | nectr's reason, as given |
 | 429: rate limited | How many seconds to wait |
-| 503: the converter is busy | Retry in a few seconds |
+| 503: nectr is busy | Retry in a few seconds |
 
 ## Security
 
@@ -67,7 +68,7 @@ The server uses the same developer API as any other script, so your plan's limit
 
 - Create a dedicated key for each client, so you can revoke one without breaking the others.
 - If a key leaks, delete it under **Settings → API keys** in nectr. It stops working immediately.
-- This server only ever reads and adds pages. **The key itself is broader:** it has the same access to the nectr API as your account, deletion included, so treat it like a password.
+- This server only ever scans. **The key itself is broader:** it has the same access to the nectr API as your account, so treat it like a password.
 
 ## Development
 
@@ -94,12 +95,11 @@ The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) calls the
 $k = "nct_your_key"
 
 npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/list
-npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name search_library
-npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name search_library --tool-arg query=pricing
-npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name get_page --tool-arg id=PAGE-ID
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name scan_page --tool-arg url=https://example.com/
+npx @modelcontextprotocol/inspector --cli node dist/index.js -e NECTR_API_KEY=$k --method tools/call --tool-name scan_page --tool-arg url=https://example.com/ --tool-arg markdown=none
 ```
 
-Add `-e NECTR_URL=http://localhost:8000` to test against a local nectr backend. Leave out `--cli` for the web interface; the argument order is the same.
+Add `-e NECTR_URL=http://localhost:8000` to test against a local nectr backend. There, scans are open to admins only unless the backend runs with `SCANS_ENABLED=true`; other accounts get a 403. Leave out `--cli` for the web interface; the argument order is the same.
 
 The Inspector's own dependencies need a newer Node than this server does. If it fails with **"Cannot find native binding"** after you upgrade Node, delete its cached copy from the npx cache (`%LocalAppData%\npm-cache\_npx` on Windows, `~/.npm/_npx` elsewhere) and run it again.
 
