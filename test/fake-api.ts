@@ -66,3 +66,36 @@ export function scanResult(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+/** A site as `GET /sites` returns it, trimmed to a realistic subset of its fields. */
+export function siteResult(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "site-1",
+    domain: "example.com",
+    verified: true,
+    verified_at: "2026-10-10T20:38:03Z",
+    paused_at: null,
+    record_name: "_nectr.example.com",
+    record_value: "nectr-verify=secretish",
+    pages_linked: 2,
+    pages_copied: 2,
+    llms_txt_url: "https://nectr.test/s/example.com/llms.txt",
+    ...overrides,
+  };
+}
+
+/** A page as `GET /sites/{id}/pages` returns it. */
+export function pageResult(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "page-1",
+    url: "https://example.com/",
+    copy_url: "https://nectr.test/s/example.com/index.md",
+    title: "Home",
+    status: "copied",
+    reason: null,
+    words: 1303,
+    tokens: 1191,
+    html_tokens: 192_436,
+    ...overrides,
+  };
+}

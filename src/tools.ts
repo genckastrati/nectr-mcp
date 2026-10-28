@@ -2,12 +2,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { describeError, type NectrClient, type Scan } from "./client.js";
+import { describeError, type NectrClient, type Scan, type Site, type SitePage } from "./client.js";
 
 /** Default cap on the markdown returned to a model: roughly 10k tokens. */
 export const DEFAULT_MAX_CHARS = 40_000;
 /** How many "only with JavaScript" blocks to list; nectr returns up to 50. */
 export const JS_BLOCKS_SHOWN = 10;
+/** How many pages of one site list_sites shows. */
+export const PAGES_SHOWN = 100;
 
 export const MARKDOWN_CHOICES = ["full", "without_javascript", "none"] as const;
 export type MarkdownChoice = (typeof MARKDOWN_CHOICES)[number];
@@ -78,7 +80,11 @@ function onlyWithJavaScript(scan: Scan): string[] {
 function markdown(scan: Scan, choice: MarkdownChoice, maxChars: number): string[] {
   if (choice === "none") return [];
   if (!scan.markdown_included) {
-    return ["## Markdown", "nectr didn't include the markdown with this scan."];
+    return [
+      "## Markdown",
+      "Not included: nectr only returns the markdown for pages on the user's own verified sites, " +
+        "and this page isn't on one. Call list_sites to see which sites and pages are the user's.",
+    ];
   }
   const full = choice === "full";
   const body = (full ? scan.rendered_markdown : scan.plain_markdown) ?? "";
@@ -120,6 +126,47 @@ export async function scanPage(
   }
 }
 
+function page(p: SitePage): string {
+  const facts = [
+    p.title,
+    p.words !== null ? plural(p.words, "word") : null,
+    p.status === "copied" ? null : `${p.status}${p.reason ? ` (${p.reason})` : ""}`,
+  ].filter(Boolean);
+  return `- ${p.url}${facts.length > 0 ? `: ${facts.join(", ")}` : ""}`;
+}
+
+function site(s: Site, pages: SitePage[]): string[] {
+  const state = !s.verified
+    ? "not verified, so scan_page won't include markdown for its pages"
+    : s.paused_at
+      ? "verified, paused"
+      : "verified";
+  const shown = pages.slice(0, PAGES_SHOWN).map(page);
+  const more = pages.length > PAGES_SHOWN ? [`- …and ${pages.length - PAGES_SHOWN} more.`] : [];
+  return [
+    `## ${s.domain}`,
+    `${state} · ${plural(pages.length, "page")}, ${s.pages_copied.toLocaleString("en")} copied as markdown` +
+      (s.llms_txt_url ? ` · llms.txt: ${s.llms_txt_url}` : ""),
+    ...(pages.length === 0 ? ["No pages listed yet."] : [...shown, ...more]),
+  ];
+}
+
+// ── Handlers (exported for tests) ───────────────────────────────────────────
+
+export async function listSites(client: NectrClient): Promise<CallToolResult> {
+  try {
+    const sites = await client.sites();
+    if (sites.length === 0) {
+      return text("The user has no sites in nectr, so scan_page won't include markdown for any page.");
+    }
+    const pages = await Promise.all(sites.map((s) => client.pages(s.id)));
+    const sections = sites.map((s, i) => site(s, pages[i]!));
+    return text([`# The user's sites in nectr`, ...sections.map((s) => s.join("\n"))].join("\n\n"));
+  } catch (err) {
+    return failure(err);
+  }
+}
+
 // ── Registration ────────────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, client: NectrClient): void {
@@ -131,7 +178,8 @@ export function registerTools(server: McpServer, client: NectrClient): void {
         "Fetch one public web page with nectr and return how AI agents see it: the page as clean markdown, " +
         "its size in words and estimated tokens (against the raw HTML), which AI crawlers its robots.txt " +
         "allows, linked PDFs and whether they have text, and the text that only appears after JavaScript " +
-        "runs. Nothing is stored. nectr honours the site's robots.txt for itself.",
+        "runs. Any public page can be scanned, but the markdown is only included for pages on the user's " +
+        "own verified sites (see list_sites). Nothing is stored. nectr honours the site's robots.txt for itself.",
       inputSchema: {
         url: z.url().describe("The http(s) address of a public web page."),
         markdown: z
@@ -151,5 +199,18 @@ export function registerTools(server: McpServer, client: NectrClient): void {
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
     (args) => scanPage(client, args),
+  );
+
+  server.registerTool(
+    "list_sites",
+    {
+      title: "List the user's sites and pages",
+      description:
+        "List the user's sites in nectr and the URLs of their pages, with whether each site is verified. " +
+        "scan_page includes the markdown only for pages on these verified sites.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    () => listSites(client),
   );
 }

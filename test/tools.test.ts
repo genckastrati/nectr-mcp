@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MAX_CHARS, JS_BLOCKS_SHOWN, scanPage } from "../src/tools.js";
-import { fakeApi, json, scanResult } from "./fake-api.js";
+import { DEFAULT_MAX_CHARS, JS_BLOCKS_SHOWN, listSites, PAGES_SHOWN, scanPage } from "../src/tools.js";
+import { fakeApi, json, pageResult, scanResult, siteResult } from "./fake-api.js";
 
 const URL_ = "https://example.com/pricing";
 
@@ -96,9 +96,11 @@ describe("scan_page", () => {
     expect(wider).not.toContain("Truncated");
   });
 
-  it("says so when nectr sent no markdown", async () => {
+  it("explains a withheld markdown and points to list_sites", async () => {
     const { out } = await scanned({ markdown_included: false, rendered_markdown: null, plain_markdown: null });
-    expect(out).toContain("nectr didn't include the markdown with this scan.");
+    expect(out).toContain("only returns the markdown for pages on the user's own verified sites");
+    expect(out).toContain("Call list_sites");
+    expect(out).toContain("## robots.txt");
   });
 
   it("falls back to the URL when the page has no title", async () => {
@@ -115,5 +117,73 @@ describe("scan_page", () => {
     const out = (result.content[0] as { text: string }).text;
     expect(out).toContain("robots.txt asks Nectrbot");
     expect(out).toContain("Do not retry");
+  });
+});
+
+describe("list_sites", () => {
+  async function listed(sites: unknown[], pagesBySite: Record<string, unknown[]> = {}) {
+    const routes: Parameters<typeof fakeApi>[0] = { "GET /sites": () => json(200, sites) };
+    for (const [id, pages] of Object.entries(pagesBySite)) routes[`GET /sites/${id}/pages`] = () => json(200, pages);
+    const { client, calls } = fakeApi(routes);
+    const result = await listSites(client);
+    return { result, calls, out: (result.content[0] as { text: string }).text };
+  }
+
+  it("lists each site with its pages' URLs", async () => {
+    const { result, out } = await listed([siteResult()], {
+      "site-1": [pageResult(), pageResult({ url: "https://example.com/about", title: "About", words: 295 })],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(out).toContain("## example.com\nverified · 2 pages, 2 copied as markdown");
+    expect(out).toContain("llms.txt: https://nectr.test/s/example.com/llms.txt");
+    expect(out).toContain("- https://example.com/: Home, 1,303 words");
+    expect(out).toContain("- https://example.com/about: About, 295 words");
+  });
+
+  it("leaves out the verification record", async () => {
+    const { out } = await listed([siteResult()], { "site-1": [] });
+    expect(out).not.toContain("nectr-verify");
+    expect(out).toContain("No pages listed yet.");
+  });
+
+  it("says an unverified site gets no markdown", async () => {
+    const { out } = await listed([siteResult({ verified: false })], { "site-1": [] });
+    expect(out).toContain("not verified, so scan_page won't include markdown for its pages");
+  });
+
+  it("shows why a page wasn't copied", async () => {
+    const { out } = await listed([siteResult()], {
+      "site-1": [pageResult({ status: "failed", reason: "HTTP 404" })],
+    });
+    expect(out).toContain("- https://example.com/: Home, 1,303 words, failed (HTTP 404)");
+  });
+
+  it("caps a long page list and says how many more there are", async () => {
+    const pages = Array.from({ length: PAGES_SHOWN + 3 }, (_, i) => pageResult({ url: `https://example.com/p${i}` }));
+    const { out } = await listed([siteResult()], { "site-1": pages });
+    expect(out).toContain(`https://example.com/p${PAGES_SHOWN - 1}:`);
+    expect(out).not.toContain(`https://example.com/p${PAGES_SHOWN}:`);
+    expect(out).toContain("…and 3 more.");
+  });
+
+  it("fetches every site's pages", async () => {
+    const { calls, out } = await listed([siteResult(), siteResult({ id: "site-2", domain: "other.org" })], {
+      "site-1": [pageResult()],
+      "site-2": [pageResult({ url: "https://other.org/" })],
+    });
+    expect(calls.map((c) => c.path).sort()).toEqual(["/sites", "/sites/site-1/pages", "/sites/site-2/pages"]);
+    expect(out).toContain("## other.org");
+    expect(out).toContain("- https://other.org/");
+  });
+
+  it("says when the user has no sites", async () => {
+    const { out } = await listed([]);
+    expect(out).toContain("no sites in nectr");
+  });
+
+  it("surfaces an API error as a tool error", async () => {
+    const { client } = fakeApi({ "GET /sites": () => json(401, { detail: "Invalid key" }) });
+    const result = await listSites(client);
+    expect(result.isError).toBe(true);
   });
 });
