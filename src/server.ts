@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { NectrClient } from "./client.js";
 import { registerTools } from "./tools.js";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.4.1";
 
 export function createServer(client: NectrClient): McpServer {
   const server = new McpServer({ name: "nectr", version: VERSION });

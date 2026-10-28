@@ -68,10 +68,15 @@ function onlyWithJavaScript(scan: Scan): string[] {
   const share = Math.round(scan.missing_word_share * 100);
   const shown = blocks.slice(0, JS_BLOCKS_SHOWN).map((b) => `- ${b.replace(/\s+/g, " ").trim()}`);
   const more = blocks.length > JS_BLOCKS_SHOWN ? [`- …and ${blocks.length - JS_BLOCKS_SHOWN} more.`] : [];
+  // Without the markdown, nectr sends only the first few blocks, shortened,
+  // so their number isn't the page's; the share still is.
+  const which = scan.markdown_included
+    ? `, in ${plural(blocks.length, "block")}. An agent that doesn't run JavaScript misses them:`
+    : ". An agent that doesn't run JavaScript misses them. The first few blocks, shortened " +
+      "(the full list comes with the markdown, for the site's owner):";
   return [
     "## Only with JavaScript",
-    `${share}% of the page's words appear only after JavaScript runs, in ${plural(blocks.length, "block")}. ` +
-      "An agent that doesn't run JavaScript misses them:",
+    `${share}% of the page's words appear only after JavaScript runs${which}`,
     ...shown,
     ...more,
   ];
