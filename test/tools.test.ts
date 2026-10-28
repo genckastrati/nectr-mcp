@@ -103,6 +103,18 @@ describe("scan_page", () => {
     expect(out).toContain("## robots.txt");
   });
 
+  // nectr sends a non-owner only the first 5 blocks, shortened: counting
+  // them would understate a page with 40.
+  it("doesn't count the blocks when nectr sent only the first few", async () => {
+    const { out } = await scanned({ markdown_included: false, rendered_markdown: null, plain_markdown: null });
+    expect(out).toContain(
+      "97% of the page's words appear only after JavaScript runs. An agent that doesn't run JavaScript misses them. " +
+        "The first few blocks, shortened",
+    );
+    expect(out).not.toMatch(/in \d+ blocks?\./);
+    expect(out).toContain("- Compare every plan side by side.");
+  });
+
   it("falls back to the URL when the page has no title", async () => {
     const { out } = await scanned({ title: null });
     expect(out.startsWith(`# ${URL_}`)).toBe(true);

@@ -50,7 +50,7 @@ Node.js 20 or newer is required.
 | Size | Words and estimated tokens of the whole page as markdown, against the raw HTML an agent receives, and the words left without JavaScript |
 | robots.txt | Whether GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, PerplexityBot, Google-Extended and CCBot may fetch the page |
 | Linked PDFs | Up to 3 PDFs on the same site: pages, words, and whether there's a text layer at all |
-| Only with JavaScript | The share of words an agent misses without JavaScript, and the first 10 of those blocks |
+| Only with JavaScript | The share of words an agent misses without JavaScript, and the first 10 of those blocks. For a page that isn't on your verified sites, nectr sends only the first 5, shortened, so the tool doesn't count them |
 | Markdown | The page as markdown, last, and only for a page on one of your verified sites; otherwise the tool says it was left out and points to `list_sites`. `markdown` picks `"full"` (after JavaScript runs, the default), `"without_javascript"` or `"none"`. It's cut at 40,000 characters unless you raise `max_chars` |
 
 Any public page can be scanned. The tool is read-only: nectr stores nothing from a scan. nectr honours the site's robots.txt for itself, so a page whose robots.txt keeps nectr out isn't fetched.
