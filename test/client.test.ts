@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { describeError, NectrApiError, NectrClient, NectrUnreachableError } from "../src/client.js";
+import {
+  describeError,
+  NectrApiError,
+  NectrClient,
+  NectrRedirectError,
+  NectrUnreachableError,
+} from "../src/client.js";
 import { loadConfig } from "../src/config.js";
 import { fakeApi, json, KEY, SITE, scanResult } from "./fake-api.js";
 
@@ -9,7 +15,36 @@ describe("NectrClient", () => {
     const { client, calls } = fakeApi({ "POST /scans": () => json(200, scanResult()) });
     await client.scan("https://example.com/pricing");
     expect(calls[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
-    expect(calls[0]!.headers["user-agent"]).toBe("nectr-mcp/0.3.1");
+    expect(calls[0]!.headers["user-agent"]).toBe("nectr-mcp/0.4.0");
+  });
+
+  it("reads the key holder's sites and a site's pages", async () => {
+    const { client, calls } = fakeApi({
+      "GET /sites": () => json(200, [{ id: "a b" }]),
+      "GET /sites/a%20b/pages": () => json(200, []),
+    });
+    await client.sites();
+    await client.pages("a b");
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /sites", "GET /sites/a%20b/pages"]);
+    expect(calls.every((c) => c.headers.authorization === `Bearer ${KEY}`)).toBe(true);
+  });
+
+  // fetch drops the Authorization header when it follows a redirect to another
+  // origin, so a followed redirect would turn into a keyless request.
+  it("refuses to follow a redirect", async () => {
+    let redirect: RequestRedirect | undefined;
+    const fetchImpl = (async (_: unknown, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response(null, { status: 308, headers: { location: "https://nectr.ch/api/v1/scans" } });
+    }) as unknown as typeof fetch;
+    const client = new NectrClient(KEY, "http://nectr.ch", fetchImpl);
+    const err = await client.scan("https://example.com").catch((e: unknown) => e);
+    expect(redirect).toBe("manual");
+    expect(err).toBeInstanceOf(NectrRedirectError);
+    const said = describeError(err);
+    expect(said).toContain("redirected to https://nectr.ch/api/v1/scans");
+    expect(said).toContain("NECTR_URL");
+    expect(said).toContain("Do not retry");
   });
 
   it("asks for a scan of the URL and nothing else", async () => {

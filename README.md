@@ -2,9 +2,14 @@
 
 An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), which shows how AI reads a web page.
 
-It gives a model one tool, `scan_page`. Given a public page's address, it returns the page as clean markdown and what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, and the text that only appears after JavaScript runs.
+It gives a model two tools:
 
-> **Coming from 0.2?** The library tools (`search_library`, `get_page`, `convert_url`) are gone. Your existing `nct_` key works with `scan_page`.
+- **`scan_page`**: given a public page's address, it returns what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, and the text that only appears after JavaScript runs. For pages on your own verified sites, it also returns the page as clean markdown.
+- **`list_sites`**: lists your sites in nectr and their pages' URLs, so you can see which pages you'll get markdown for.
+
+> **Coming from 0.3?** `scan_page` now includes the markdown only for pages on your own verified sites. Any other page still gets the full scan, without the markdown.
+>
+> **Coming from 0.2?** The library tools (`search_library`, `get_page`, `convert_url`) are gone. Your existing `nct_` key works with these tools.
 
 ## Setup
 
@@ -25,16 +30,18 @@ It gives a model one tool, `scan_page`. Given a public page's address, it return
 }
 ```
 
-3. Restart the client. The `scan_page` tool should appear.
+3. Restart the client. The `scan_page` and `list_sites` tools should appear.
 
 Node.js 20 or newer is required.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `NECTR_API_KEY` | yes | — | Your `nct_` API key |
-| `NECTR_URL` | no | `https://nectr.ch` | The nectr site to talk to, for a self-hosted instance |
+| `NECTR_URL` | no | `https://nectr.ch` | The nectr site to talk to, for a self-hosted instance. Use its exact https address: the server won't follow a redirect, because the key would be dropped on the way |
 
-## The tool
+## The tools
+
+### scan_page
 
 `scan_page(url, markdown?, max_chars?)` fetches the page twice, with a browser and as plain HTTP, the way AI crawlers do, and returns:
 
@@ -44,11 +51,15 @@ Node.js 20 or newer is required.
 | robots.txt | Whether GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, PerplexityBot, Google-Extended and CCBot may fetch the page |
 | Linked PDFs | Up to 3 PDFs on the same site: pages, words, and whether there's a text layer at all |
 | Only with JavaScript | The share of words an agent misses without JavaScript, and the first 10 of those blocks |
-| Markdown | The page as markdown, last. `markdown` picks `"full"` (after JavaScript runs, the default), `"without_javascript"` or `"none"`. It's cut at 40,000 characters unless you raise `max_chars` |
+| Markdown | The page as markdown, last, and only for a page on one of your verified sites; otherwise the tool says it was left out and points to `list_sites`. `markdown` picks `"full"` (after JavaScript runs, the default), `"without_javascript"` or `"none"`. It's cut at 40,000 characters unless you raise `max_chars` |
 
-The tool is read-only: nectr stores nothing from a scan. nectr honours the site's robots.txt for itself, so a page whose robots.txt keeps nectr out isn't fetched.
+Any public page can be scanned. The tool is read-only: nectr stores nothing from a scan. nectr honours the site's robots.txt for itself, so a page whose robots.txt keeps nectr out isn't fetched.
 
 The full response, field by field, is in the [scan API documentation](https://nectr.ch/docs#scan).
+
+### list_sites
+
+`list_sites()` takes no arguments. For each of your sites it gives the domain, whether it's verified (only verified sites get markdown from `scan_page`), how many pages nectr has copied as markdown, the site's llms.txt address, and the URL of each page (up to 100 per site) with its title and word count. A page nectr couldn't copy shows its status and the reason.
 
 ## Limits and errors
 
@@ -61,6 +72,7 @@ The server uses the same developer API as any other script, so the API's limits 
 | 422: the page can't be scanned (not public, not found, a PDF) | nectr's reason, as given |
 | 429: rate limited | How many seconds to wait |
 | 503: nectr is busy | Retry in a few seconds |
+| A redirect (for example `NECTR_URL` set to `http://…`) | Don't retry; set `NECTR_URL` to nectr's https address |
 
 ## Security
 
@@ -68,7 +80,7 @@ The server uses the same developer API as any other script, so the API's limits 
 
 - Create a dedicated key for each client, so you can revoke one without breaking the others.
 - If a key leaks, delete it under **Settings → API keys** in nectr. It stops working immediately.
-- This server only ever scans. **The key itself is broader:** it has the same access to the nectr API as your account, so treat it like a password.
+- This server only ever scans pages and reads your list of sites. **The key itself is broader:** it has the same access to the nectr API as your account, so treat it like a password.
 
 ## Development
 
