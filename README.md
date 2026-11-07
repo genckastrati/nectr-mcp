@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), 
 
 It gives a model two tools:
 
-- **`scan_page`**: given a public page's address, it returns what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, and the text that only appears after JavaScript runs. For pages on your own verified sites, it also returns the page as clean markdown.
+- **`scan_page`**: given a public page's address, it returns what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, its data tables and the structured data it declares (JSON-LD, microdata, schema.org RDFa), and the text that only appears after JavaScript runs. For pages on your own verified sites, it also returns the page as clean markdown, the tables' rows and the structured data itself.
 - **`list_sites`**: lists your sites in nectr and their pages' URLs, so you can see which pages you'll get markdown for.
 
 > **Coming from 0.3?** `scan_page` now includes the markdown only for pages on your own verified sites. Any other page still gets the full scan, without the markdown.
@@ -50,8 +50,11 @@ Node.js 20 or newer is required.
 | Size | Words and estimated tokens of the whole page as markdown, against the raw HTML an agent receives, and the words left without JavaScript |
 | robots.txt | Whether GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, PerplexityBot, Google-Extended and CCBot may fetch the page |
 | Linked PDFs | Up to 3 PDFs on the same site: pages, words, and whether there's a text layer at all |
+| Tables | Each data table's title, columns and row count (the first 20). The rows are in the markdown, for a page on one of your verified sites. Left out when the page has none |
+| Structured data | What the page declares about itself, experimental on nectr's side: each item's schema.org types and where it was declared (JSON-LD, microdata or RDFa, the first 20), and its definition lists. "None" when it declares nothing |
 | Only with JavaScript | The share of words an agent misses without JavaScript, and the first 10 of those blocks. For a page that isn't on your verified sites, nectr sends only the first 5, shortened, so the tool doesn't count them |
 | Markdown | The page as markdown, last, and only for a page on one of your verified sites; otherwise the tool says it was left out and points to `list_sites`. `markdown` picks `"full"` (after JavaScript runs, the default), `"without_javascript"` or `"none"`. It's cut at 40,000 characters unless you raise `max_chars` |
+| Structured data as JSON | For a page on one of your verified sites, after the markdown: the structured data itself, compact, cut at `max_chars` like the markdown |
 
 Any public page can be scanned. The tool is read-only: nectr stores nothing from a scan. nectr honours the site's robots.txt for itself, so a page whose robots.txt keeps nectr out isn't fetched.
 

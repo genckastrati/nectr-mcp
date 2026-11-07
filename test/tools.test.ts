@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MAX_CHARS, JS_BLOCKS_SHOWN, listSites, PAGES_SHOWN, scanPage } from "../src/tools.js";
+import { DEFAULT_MAX_CHARS, ITEMS_SHOWN, JS_BLOCKS_SHOWN, listSites, PAGES_SHOWN, scanPage, TABLES_SHOWN } from "../src/tools.js";
 import { fakeApi, json, pageResult, scanResult, siteResult } from "./fake-api.js";
 
 const URL_ = "https://example.com/pricing";
@@ -118,6 +118,106 @@ describe("scan_page", () => {
   it("falls back to the URL when the page has no title", async () => {
     const { out } = await scanned({ title: null });
     expect(out.startsWith(`# ${URL_}`)).toBe(true);
+  });
+
+  it("leaves out tables and structured data when nectr doesn't send them", async () => {
+    // An older nectr; also what the default fixture is.
+    const { out } = await scanned();
+    expect(out).not.toContain("## Tables");
+    expect(out).not.toContain("## Structured data");
+  });
+
+  describe("tables and structured data", () => {
+    const PLANS = { title: "Plans", columns: ["Plan", "Price"], row_count: 2,
+      rows: [{ Plan: "Starter", Price: "CHF 9" }, { Plan: "Team", Price: "CHF 29" }] };
+    const PRODUCT = { "@type": "Product", name: "Team", offers: { "@type": "Offer", price: "29" } };
+    const OWNERS = {
+      tables: [PLANS, { title: null, columns: ["Region", "Q1"], row_count: 1, rows: [{ Region: "EU", Q1: "3" }] }],
+      structured_data: {
+        items: [
+          { source: "json-ld", types: ["Product"], data: PRODUCT },
+          { source: "microdata", types: ["Event", "Course"], data: { "@type": ["Event", "Course"] } },
+          { source: "rdfa", types: [], data: { name: "Untyped" } },
+        ],
+        definition_lists: [{ title: "Limits", term_count: 2, terms: [
+          { term: "Pages", details: ["Up to 500"] }, { term: "Sites", details: ["One"] },
+        ] }],
+        skipped_json_ld: 0,
+      },
+    };
+    const NOT_OWNERS = {
+      markdown_included: false, rendered_markdown: null, plain_markdown: null,
+      tables: OWNERS.tables.map((t) => ({ ...t, rows: null })),
+      structured_data: {
+        ...OWNERS.structured_data,
+        items: OWNERS.structured_data.items.map((i) => ({ ...i, data: null })),
+        definition_lists: OWNERS.structured_data.definition_lists.map((d) => ({ ...d, terms: null })),
+      },
+    };
+
+    it("lists the tables and what the page declares, before the long sections", async () => {
+      const { out } = await scanned(OWNERS);
+      expect(out).toContain("## Tables\n2 data tables on the page, with JavaScript:\n" +
+        "- Plans: 2 columns (Plan, Price), 2 rows\n- Table 2: 2 columns (Region, Q1), 1 row\n" +
+        "Their rows are in the markdown below.");
+      expect(out).toContain("- Product (JSON-LD)\n- Event, Course (microdata)\n- No type (RDFa)\n" +
+        "- 1 definition list (<dl>), 2 terms in all");
+      const order = ["## Tables", "## Structured data\n", "## Only with JavaScript", "## The page as markdown",
+        "## Structured data as JSON"];
+      const at = order.map((h) => out.indexOf(h));
+      expect(at.every((i) => i >= 0)).toBe(true);
+      expect([...at].sort((a, b) => a - b)).toEqual(at);
+    });
+
+    it("gives the owner the structured data itself, as JSON, last", async () => {
+      const { out } = await scanned(OWNERS);
+      const json = out.slice(out.indexOf("## Structured data as JSON\n") + "## Structured data as JSON\n".length);
+      expect(JSON.parse(json)).toEqual({
+        items: OWNERS.structured_data.items,
+        definition_lists: OWNERS.structured_data.definition_lists,
+      });
+    });
+
+    it("tells anyone else the kinds, and that the content is the owner's", async () => {
+      const { out } = await scanned(NOT_OWNERS);
+      expect(out).toContain("- Plans: 2 columns (Plan, Price), 2 rows");
+      expect(out).toContain("Their rows are only for pages on the user's own verified sites (see list_sites).");
+      expect(out).toContain("- Product (JSON-LD)");
+      expect(out).toContain("The data itself is only for pages on the user's own verified sites (see list_sites).");
+      expect(out).not.toContain("## Structured data as JSON");
+      expect(out).not.toContain("CHF 9");
+    });
+
+    it("points the owner to the full markdown for the rows when it asked for another", async () => {
+      const { out } = await scanned(OWNERS, { markdown: "none" });
+      expect(out).toContain('For their rows, call scan_page with markdown "full".');
+    });
+
+    it("says when the page declares nothing, and how many JSON-LD blocks nectr left out", async () => {
+      const { out } = await scanned({ structured_data: { items: [], definition_lists: [], skipped_json_ld: 2 } });
+      expect(out).toContain("None: the page declares no JSON-LD, microdata or schema.org RDFa");
+      expect(out).toContain("nectr left out 2 JSON-LD blocks: not valid JSON, or too large.");
+      expect(out).not.toContain("## Structured data as JSON");
+    });
+
+    it("caps long lists and truncates the JSON at max_chars", async () => {
+      const many = {
+        tables: Array.from({ length: TABLES_SHOWN + 2 }, (_, i) => ({ ...PLANS, title: `T${i}` })),
+        structured_data: {
+          items: Array.from({ length: ITEMS_SHOWN + 3 }, (_, i) => ({
+            source: "json-ld", types: ["Thing"], data: { "@type": "Thing", n: i, text: "x".repeat(100) },
+          })),
+          definition_lists: [],
+          skipped_json_ld: 0,
+        },
+      };
+      const { out } = await scanned(many, { max_chars: 1_000 });
+      expect(out).toContain(`- T${TABLES_SHOWN - 1}:`);
+      expect(out).not.toContain(`- T${TABLES_SHOWN}:`);
+      expect(out).toContain("- …and 2 more.");
+      expect(out).toContain("- …and 3 more.");
+      expect(out).toMatch(/\[Truncated: showing 1,000 of [\d,]+ characters\. Call scan_page again with a larger max_chars/);
+    });
   });
 
   it("surfaces a robots.txt refusal as an error not to retry", async () => {
