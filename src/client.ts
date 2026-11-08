@@ -18,6 +18,37 @@ export interface PdfCheck {
   note: string | null;
 }
 
+/** A data table on the rendered page. `rows` only for a page on one of the key holder's verified sites. */
+export interface ScanTable {
+  title: string | null;
+  columns: string[];
+  row_count: number;
+  rows: Record<string, string>[] | null;
+}
+
+/** One item the page declares about itself: a JSON-LD block, or a microdata or schema.org RDFa item. */
+export interface StructuredItem {
+  source: "json-ld" | "microdata" | "rdfa";
+  types: string[];
+  /** In JSON-LD's shape. Null unless the page is on one of the key holder's verified sites. */
+  data: Record<string, unknown> | unknown[] | null;
+}
+
+/** A definition list (`<dl>`) on the page; `terms` only for the owner, like an item's data. */
+export interface DefinitionList {
+  title: string | null;
+  term_count: number;
+  terms: { term: string; details: string[] }[] | null;
+}
+
+/** What the page declares as data (experimental on nectr's side). */
+export interface StructuredData {
+  items: StructuredItem[];
+  definition_lists: DefinitionList[];
+  /** JSON-LD blocks nectr left out: not valid JSON, or too large. */
+  skipped_json_ld: number;
+}
+
 /** One scan, as `POST /api/v1/scans` returns it to a key holder. */
 export interface Scan {
   url: string;
@@ -38,6 +69,10 @@ export interface Scan {
   pdfs: PdfCheck[];
   pdfs_not_checked: number;
   scanned_at: string;
+  /** The page's data tables. Optional: a nectr without them (before October 2026) doesn't send the field. */
+  tables?: ScanTable[] | null;
+  /** What the page declares as data. Optional, like `tables` (November 2026). */
+  structured_data?: StructuredData | null;
   markdown_included: boolean;
 }
 
@@ -97,7 +132,7 @@ export class NectrRedirectError extends Error {
 
 type Fetch = typeof fetch;
 
-const USER_AGENT = "nectr-mcp/0.4.1";
+const USER_AGENT = "nectr-mcp/0.5.0";
 // A scan fetches the page twice (a browser and plain HTTP) and checks linked
 // PDFs, so it can take a while.
 const TIMEOUT_MS = 90_000;

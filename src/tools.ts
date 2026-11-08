@@ -10,6 +10,9 @@ export const DEFAULT_MAX_CHARS = 40_000;
 export const JS_BLOCKS_SHOWN = 10;
 /** How many pages of one site list_sites shows. */
 export const PAGES_SHOWN = 100;
+/** How many tables, and how many structured data items, scan_page lists; nectr returns up to 50 and 100. */
+export const TABLES_SHOWN = 20;
+export const ITEMS_SHOWN = 20;
 
 export const MARKDOWN_CHOICES = ["full", "without_javascript", "none"] as const;
 export type MarkdownChoice = (typeof MARKDOWN_CHOICES)[number];
@@ -58,6 +61,79 @@ function pdfs(scan: Scan): string[] {
     );
   }
   return ["## Linked PDFs", ...lines];
+}
+
+const SOURCES = { "json-ld": "JSON-LD", microdata: "microdata", rdfa: "RDFa" } as const;
+const NOT_THE_OWNERS = "only for pages on the user's own verified sites (see list_sites)";
+
+function tables(scan: Scan, choice: MarkdownChoice): string[] {
+  // Absent from an older nectr; empty when the page has none.
+  if (!scan.tables || scan.tables.length === 0) return [];
+  const shown = scan.tables.slice(0, TABLES_SHOWN).map((t, i) => {
+    const columns = `${plural(t.columns.length, "column")} (${t.columns.join(", ")})`;
+    return `- ${t.title || `Table ${i + 1}`}: ${columns}, ${plural(t.row_count, "row")}`;
+  });
+  const more = scan.tables.length > TABLES_SHOWN ? [`- …and ${scan.tables.length - TABLES_SHOWN} more.`] : [];
+  // The owner's rows are already in the markdown, as markdown tables:
+  // repeating them would double the output.
+  const rows = !scan.markdown_included
+    ? `Their rows are ${NOT_THE_OWNERS}.`
+    : choice === "full"
+      ? "Their rows are in the markdown below."
+      : 'For their rows, call scan_page with markdown "full".';
+  return ["## Tables", `${plural(scan.tables.length, "data table")} on the page, with JavaScript:`, ...shown, ...more, rows];
+}
+
+function structuredData(scan: Scan): string[] {
+  const data = scan.structured_data;
+  if (!data) return []; // an older nectr
+  const skipped =
+    data.skipped_json_ld > 0
+      ? [`nectr left out ${plural(data.skipped_json_ld, "JSON-LD block")}: not valid JSON, or too large.`]
+      : [];
+  if (data.items.length === 0 && data.definition_lists.length === 0) {
+    return [
+      "## Structured data",
+      "None: the page declares no JSON-LD, microdata or schema.org RDFa, and has no definition lists.",
+      ...skipped,
+    ];
+  }
+  const items = data.items
+    .slice(0, ITEMS_SHOWN)
+    .map((item) => `- ${item.types.join(", ") || "No type"} (${SOURCES[item.source] ?? item.source})`);
+  const more = data.items.length > ITEMS_SHOWN ? [`- …and ${data.items.length - ITEMS_SHOWN} more.`] : [];
+  const lists =
+    data.definition_lists.length > 0
+      ? [`- ${plural(data.definition_lists.length, "definition list")} (<dl>), ${plural(
+          data.definition_lists.reduce((n, d) => n + d.term_count, 0),
+          "term",
+        )} in all`]
+      : [];
+  const where = scan.markdown_included ? "The data itself is at the end, as JSON." : `The data itself is ${NOT_THE_OWNERS}.`;
+  return [
+    "## Structured data",
+    "What the page declares about itself, in page order (nectr marks this experimental):",
+    ...items,
+    ...more,
+    ...lists,
+    ...skipped,
+    where,
+  ];
+}
+
+/** For the owner: the structured data itself, compact, last like the markdown. */
+function structuredDataJson(scan: Scan, maxChars: number): string[] {
+  const data = scan.structured_data;
+  if (!data || !scan.markdown_included || (data.items.length === 0 && data.definition_lists.length === 0)) return [];
+  const body = JSON.stringify({ items: data.items, definition_lists: data.definition_lists });
+  const heading = "## Structured data as JSON";
+  if (body.length <= maxChars) return [heading, body];
+  return [
+    heading,
+    body.slice(0, maxChars),
+    `[Truncated: showing ${maxChars.toLocaleString("en")} of ${body.length.toLocaleString("en")} characters. ` +
+      "Call scan_page again with a larger max_chars for the rest.]",
+  ];
 }
 
 function onlyWithJavaScript(scan: Scan): string[] {
@@ -122,8 +198,11 @@ export async function scanPage(
       size(scan),
       robots(scan),
       pdfs(scan),
+      tables(scan, choice),
+      structuredData(scan),
       onlyWithJavaScript(scan),
       markdown(scan, choice, maxChars),
+      structuredDataJson(scan, maxChars),
     ].filter((s) => s.length > 0);
     return text(sections.map((s) => s.join("\n")).join("\n\n"));
   } catch (err) {
@@ -182,9 +261,11 @@ export function registerTools(server: McpServer, client: NectrClient): void {
       description:
         "Fetch one public web page with nectr and return how AI agents see it: the page as clean markdown, " +
         "its size in words and estimated tokens (against the raw HTML), which AI crawlers its robots.txt " +
-        "allows, linked PDFs and whether they have text, and the text that only appears after JavaScript " +
-        "runs. Any public page can be scanned, but the markdown is only included for pages on the user's " +
-        "own verified sites (see list_sites). Nothing is stored. nectr honours the site's robots.txt for itself.",
+        "allows, linked PDFs and whether they have text, its data tables and the structured data it declares " +
+        "(JSON-LD, microdata, schema.org RDFa), and the text that only appears after JavaScript runs. Any " +
+        "public page can be scanned, but the markdown, the tables' rows and the structured data itself are " +
+        "only included for pages on the user's own verified sites (see list_sites). Nothing is stored. nectr " +
+        "honours the site's robots.txt for itself.",
       inputSchema: {
         url: z.url().describe("The http(s) address of a public web page."),
         markdown: z
@@ -199,7 +280,9 @@ export function registerTools(server: McpServer, client: NectrClient): void {
           .int()
           .min(1000)
           .optional()
-          .describe(`Truncate the markdown after this many characters (default ${DEFAULT_MAX_CHARS}).`),
+          .describe(
+            `Truncate the markdown, and the structured data's JSON, each after this many characters (default ${DEFAULT_MAX_CHARS}).`,
+          ),
       },
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
