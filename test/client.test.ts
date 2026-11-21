@@ -5,6 +5,7 @@ import {
   NectrApiError,
   NectrClient,
   NectrRedirectError,
+  NectrTimeoutError,
   NectrUnreachableError,
 } from "../src/client.js";
 import { loadConfig } from "../src/config.js";
@@ -89,6 +90,26 @@ describe("NectrClient", () => {
     }) as unknown as typeof fetch;
     const client = new NectrClient(KEY, SITE, failing);
     await expect(client.scan("https://example.com")).rejects.toBeInstanceOf(NectrUnreachableError);
+  });
+
+  it("reads a site's published datasets", async () => {
+    const { client, calls } = fakeApi({ "GET /sites/a%20b/datasets": () => json(200, []) });
+    expect(await client.datasets("a b")).toEqual([]);
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /sites/a%20b/datasets"]);
+  });
+
+  // AbortSignal.timeout aborts fetch with a DOMException named TimeoutError.
+  it("reports a slow answer as a timeout, not as unreachable", async () => {
+    const slow = (async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }) as unknown as typeof fetch;
+    const client = new NectrClient(KEY, SITE, slow);
+    const err = await client.scan("https://example.com").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NectrTimeoutError);
+    const said = describeError(err);
+    expect(said).toContain("didn't answer within 90 seconds");
+    expect(said).toContain("Trying once more may work");
+    expect(said).not.toContain("Could not reach");
   });
 });
 
