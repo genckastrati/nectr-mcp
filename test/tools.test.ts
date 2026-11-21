@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MAX_CHARS, ITEMS_SHOWN, JS_BLOCKS_SHOWN, listSites, PAGES_SHOWN, scanPage, TABLES_SHOWN } from "../src/tools.js";
-import { fakeApi, json, pageResult, scanResult, siteResult } from "./fake-api.js";
+import {
+  DATASETS_SHOWN,
+  DEFAULT_MAX_CHARS,
+  ITEMS_SHOWN,
+  JS_BLOCKS_SHOWN,
+  listSites,
+  PAGES_SHOWN,
+  scanPage,
+  TABLES_SHOWN,
+} from "../src/tools.js";
+import { datasetResult, fakeApi, json, pageResult, scanResult, siteResult } from "./fake-api.js";
 
 const URL_ = "https://example.com/pricing";
 
@@ -278,14 +287,97 @@ describe("list_sites", () => {
     expect(out).toContain("…and 3 more.");
   });
 
-  it("fetches every site's pages", async () => {
+  it("fetches every site's pages and datasets", async () => {
     const { calls, out } = await listed([siteResult(), siteResult({ id: "site-2", domain: "other.org" })], {
       "site-1": [pageResult()],
       "site-2": [pageResult({ url: "https://other.org/" })],
     });
-    expect(calls.map((c) => c.path).sort()).toEqual(["/sites", "/sites/site-1/pages", "/sites/site-2/pages"]);
+    expect(calls.map((c) => c.path).sort()).toEqual([
+      "/sites",
+      "/sites/site-1/datasets",
+      "/sites/site-1/pages",
+      "/sites/site-2/datasets",
+      "/sites/site-2/pages",
+    ]);
     expect(out).toContain("## other.org");
     expect(out).toContain("- https://other.org/");
+  });
+
+  describe("published datasets", () => {
+    async function withDatasets(datasets: unknown[] | Response, site = siteResult()) {
+      const { client } = fakeApi({
+        "GET /sites": () => json(200, [site]),
+        "GET /sites/site-1/pages": () => json(200, [pageResult()]),
+        "GET /sites/site-1/datasets": () => (datasets instanceof Response ? datasets : json(200, datasets)),
+      });
+      const result = await listSites(client);
+      return { result, out: (result.content[0] as { text: string }).text };
+    }
+
+    it("lists each with its kind, source page and addresses, before the pages", async () => {
+      const { out } = await withDatasets([
+        datasetResult(),
+        datasetResult({
+          name: "home-data",
+          kind: "structured",
+          page_url: "https://example.com/",
+          title: "Home",
+          json_url: "https://nectr.test/s/example.com/datasets/home-data.json",
+          csv_url: null,
+        }),
+      ]);
+      expect(out).toContain("Published datasets (2):");
+      expect(out).toContain(
+        '- opening-hours (table "Opening hours" from https://example.com/contact): ' +
+          "JSON https://nectr.test/s/example.com/datasets/opening-hours.json · " +
+          "CSV https://nectr.test/s/example.com/datasets/opening-hours.csv",
+      );
+      expect(out).toContain(
+        '- home-data (structured data "Home" from https://example.com/): JSON https://nectr.test/s/example.com/datasets/home-data.json',
+      );
+      expect(out).not.toContain("home-data.csv");
+      expect(out).toContain(
+        "All of the site's datasets that are on their pages, as JSON: https://nectr.test/s/example.com/datasets.json",
+      );
+      expect(out.indexOf("Published datasets")).toBeLessThan(out.indexOf("Pages:"));
+    });
+
+    it("says when one is missing from its page, and when it goes", async () => {
+      const { out } = await withDatasets([
+        datasetResult({ found: false, missing_since: "2026-11-21T02:00:00Z", deleted_after: "2026-11-21T22:00:00Z" }),
+      ]);
+      expect(out).toContain(
+        '- opening-hours (table "Opening hours" from https://example.com/contact): not on its page at the last fetch, ' +
+          "so its addresses answer not found; deleted if still missing at a fetch from 2026-11-21",
+      );
+      expect(out).not.toContain("opening-hours.json");
+      expect(out).not.toContain("datasets.json"); // no catalogue line when none is on its page
+    });
+
+    it("says a paused site's datasets aren't served", async () => {
+      const { out } = await withDatasets([datasetResult()], siteResult({ paused_at: "2026-11-20T00:00:00Z" }));
+      expect(out).toContain("The site is paused, so none of them is served until it's resumed.");
+    });
+
+    it("caps a long list and says how many more there are", async () => {
+      const many = Array.from({ length: DATASETS_SHOWN + 2 }, (_, i) => datasetResult({ name: `d${i}` }));
+      const { out } = await withDatasets(many);
+      expect(out).toContain(`- d${DATASETS_SHOWN - 1} (`);
+      expect(out).not.toContain(`- d${DATASETS_SHOWN} (`);
+      expect(out).toContain("…and 2 more.");
+    });
+
+    it.each([
+      ["none published", () => json(200, [])],
+      ["Publish closed", () => json(403, { detail: "Publish isn't open yet." })],
+      ["an older nectr without the route", () => json(404, { detail: "Not Found" })],
+      ["a server error", () => json(500, { detail: "boom" })],
+    ])("leaves the section out, and still lists the site, with %s", async (_, response) => {
+      const { result, out } = await withDatasets(response());
+      expect(result.isError).toBeUndefined();
+      expect(out).not.toContain("Published datasets");
+      expect(out).toContain("- https://example.com/: Home");
+    });
   });
 
   it("says when the user has no sites", async () => {

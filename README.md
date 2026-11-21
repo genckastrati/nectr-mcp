@@ -5,8 +5,10 @@ An [MCP](https://modelcontextprotocol.io) server for [nectr](https://nectr.ch), 
 It gives a model two tools:
 
 - **`scan_page`**: given a public page's address, it returns what an AI agent gets from it: the size in words and estimated tokens, which AI crawlers the site's robots.txt allows, linked PDFs and whether they hold text, its data tables and the structured data it declares (JSON-LD, microdata, schema.org RDFa), and the text that only appears after JavaScript runs. For pages on your own verified sites, it also returns the page as clean markdown, the tables' rows and the structured data itself.
-- **`list_sites`**: lists your sites in nectr and their pages' URLs, so you can see which pages you'll get markdown for.
+- **`list_sites`**: lists your sites in nectr and their pages' URLs, so you can see which pages you'll get markdown for, and the datasets you've published from each site with their addresses.
 
+> **New in 0.5:** `scan_page` reports a page's data tables and the structured data it declares, and `list_sites` shows the datasets you've published from each site.
+>
 > **Coming from 0.3?** `scan_page` now includes the markdown only for pages on your own verified sites. Any other page still gets the full scan, without the markdown.
 >
 > **Coming from 0.2?** The library tools (`search_library`, `get_page`, `convert_url`) are gone. Your existing `nct_` key works with these tools.
@@ -64,6 +66,8 @@ The full response, field by field, is in the [scan API documentation](https://ne
 
 `list_sites()` takes no arguments. For each of your sites it gives the domain, whether it's verified (only verified sites get markdown from `scan_page`), how many pages nectr has copied as markdown, the site's llms.txt address, and the URL of each page (up to 100 per site) with its title and word count. A page nectr couldn't copy shows its status and the reason.
 
+Before the pages come the datasets you've published from the site with [Publish](https://nectr.ch/docs#publish) (up to 50 per site): each one's name, kind (table, list, structured data or page content), title and source page, its JSON address and, for tables and lists, its CSV address, then the site's catalogue. A dataset that wasn't on its page at the last fetch says so, and from when it's deleted if it stays missing. Publishing and renaming datasets stay in nectr's dashboard: the tool only reads them. When nectr doesn't answer for the datasets, the site is listed without them.
+
 ## Limits and errors
 
 The server uses the same developer API as any other script, so the API's limits apply: 10 scans a minute from one IP address. Errors are worded so a model knows whether to retry:
@@ -76,6 +80,8 @@ The server uses the same developer API as any other script, so the API's limits 
 | 429: rate limited | How many seconds to wait |
 | 503: nectr is busy | Retry in a few seconds |
 | A redirect (for example `NECTR_URL` set to `http://…`) | Don't retry; set `NECTR_URL` to nectr's https address |
+| No answer within 90 seconds (a page with large linked PDFs can take that long) | nectr was reached but slow; trying once more may work |
+| No answer at all (network, DNS, TLS) | nectr couldn't be reached; check the network or `NECTR_URL` |
 
 ## Security
 
@@ -83,7 +89,7 @@ The server uses the same developer API as any other script, so the API's limits 
 
 - Create a dedicated key for each client, so you can revoke one without breaking the others.
 - If a key leaks, delete it under **Settings → API keys** in nectr. It stops working immediately.
-- This server only ever scans pages and reads your list of sites. **The key itself is broader:** it has the same access to the nectr API as your account, so treat it like a password.
+- This server only ever scans pages and reads your sites, their pages and their published datasets. **The key itself is broader:** it has the same access to the nectr API as your account, so treat it like a password.
 
 ## Development
 
@@ -120,10 +126,51 @@ The Inspector's own dependencies need a newer Node than this server does. If it 
 
 The quickest sanity check needs no key at all: `npx -y nectr-mcp` should print "NECTR_API_KEY is not set" and exit.
 
+### Checks before publishing
+
+`npm run smoke` starts the built server the way an MCP client does and runs the release checks against nectr with your key: the tools and their read-only marks, `list_sites`, a page on one of your verified sites (markdown, tables, structured data as JSON, `markdown=none`, `max_chars`), a page that declares nothing and a page that isn't yours. Each prints PASS, SKIP (with the reason) or FAIL, and the script exits 1 if anything failed. It runs four or five scans.
+
+```bash
+npm run build
+NECTR_API_KEY=nct_... npm run smoke
+# optional: NECTR_SMOKE_PAGE=<a page of yours with a table and JSON-LD>, NECTR_SMOKE_FOREIGN=<someone else's page>, NECTR_URL=…
+```
+
+It stops after `list_sites` when the key is rejected: nectr runs a scan sent with a rejected key as an anonymous one, so the scan checks would test nothing.
+
+### Trying it in Claude
+
+To try a local build in a real conversation before publishing, point the client at `dist/index.js` instead of `npx`, and rebuild after each change.
+
+**Claude Desktop** (Settings → Developer → Edit Config, or `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS). Desktop doesn't start from your shell, so give `node`'s full path (`which node`; with nvm it changes when you switch versions):
+
+```json
+{
+  "mcpServers": {
+    "nectr-dev": {
+      "command": "/full/path/to/node",
+      "args": ["/full/path/to/nectr-mcp/dist/index.js"],
+      "env": { "NECTR_API_KEY": "nct_your_key_here" }
+    }
+  }
+}
+```
+
+Quit Desktop completely and open it again; `nectr-dev` then shows under the tools button. Ask, for example, "Which of my nectr sites have published datasets?" or "Scan https://example.com/ with nectr and tell me what it declares", and check that the answer quotes the tool. Its logs are in `~/Library/Logs/Claude/mcp-server-nectr-dev.log`.
+
+**Claude Code**, from this folder:
+
+```bash
+claude mcp add nectr-dev -e NECTR_API_KEY=nct_... -- node "$PWD/dist/index.js"
+```
+
+Then `/mcp` in a session lists it. `claude mcp remove nectr-dev` takes it out again.
+
 ### Publishing
 
 ```bash
 npm version patch      # or minor / major; also bump VERSION in src/server.ts and USER_AGENT in src/client.ts
+npm run build && NECTR_API_KEY=nct_... npm run smoke   # every check PASS or SKIP
 npm publish            # prepublishOnly runs typecheck, tests and build first
 ```
 

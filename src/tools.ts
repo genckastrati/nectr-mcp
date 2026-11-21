@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { describeError, type NectrClient, type Scan, type Site, type SitePage } from "./client.js";
+import { describeError, type NectrClient, type Scan, type Site, type SiteDataset, type SitePage } from "./client.js";
 
 /** Default cap on the markdown returned to a model: roughly 10k tokens. */
 export const DEFAULT_MAX_CHARS = 40_000;
@@ -13,6 +13,8 @@ export const PAGES_SHOWN = 100;
 /** How many tables, and how many structured data items, scan_page lists; nectr returns up to 50 and 100. */
 export const TABLES_SHOWN = 20;
 export const ITEMS_SHOWN = 20;
+/** How many published datasets list_sites shows per site; nectr allows up to 200. */
+export const DATASETS_SHOWN = 50;
 
 export const MARKDOWN_CHOICES = ["full", "without_javascript", "none"] as const;
 export type MarkdownChoice = (typeof MARKDOWN_CHOICES)[number];
@@ -219,7 +221,37 @@ function page(p: SitePage): string {
   return `- ${p.url}${facts.length > 0 ? `: ${facts.join(", ")}` : ""}`;
 }
 
-function site(s: Site, pages: SitePage[]): string[] {
+const KINDS: Record<string, string> = {
+  table: "table",
+  list: "list",
+  structured: "structured data",
+  content: "page content",
+};
+
+function dataset(d: SiteDataset): string {
+  const what = `${KINDS[d.kind] ?? d.kind}${d.title ? ` "${d.title}"` : ""} from ${d.page_url}`;
+  const where = d.found
+    ? `JSON ${d.json_url}${d.csv_url ? ` · CSV ${d.csv_url}` : ""}`
+    : "not on its page at the last fetch, so its addresses answer not found" +
+      (d.deleted_after ? `; deleted if still missing at a fetch from ${d.deleted_after.slice(0, 10)}` : "");
+  return `- ${d.name} (${what}): ${where}`;
+}
+
+/** The site's published datasets, or nothing when it has none or nectr didn't send them. */
+function datasets(s: Site, list: SiteDataset[] | null): string[] {
+  if (!list || list.length === 0) return [];
+  const shown = list.slice(0, DATASETS_SHOWN).map(dataset);
+  const more = list.length > DATASETS_SHOWN ? [`- …and ${list.length - DATASETS_SHOWN} more.`] : [];
+  // The catalogue sits beside the datasets: …/s/<domain>/datasets.json.
+  const found = list.find((d) => d.found);
+  const catalogue = found
+    ? [`All of the site's datasets that are on their pages, as JSON: ${found.json_url.replace(/\/datasets\/[^/]+\.json$/, "/datasets.json")}`]
+    : [];
+  const paused = s.paused_at ? ["The site is paused, so none of them is served until it's resumed."] : [];
+  return [`Published datasets (${list.length}):`, ...shown, ...more, ...catalogue, ...paused];
+}
+
+function site(s: Site, pages: SitePage[], published: SiteDataset[] | null): string[] {
   const state = !s.verified
     ? "not verified, so scan_page won't include markdown for its pages"
     : s.paused_at
@@ -231,7 +263,9 @@ function site(s: Site, pages: SitePage[]): string[] {
     `## ${s.domain}`,
     `${state} · ${plural(pages.length, "page")}, ${s.pages_copied.toLocaleString("en")} copied as markdown` +
       (s.llms_txt_url ? ` · llms.txt: ${s.llms_txt_url}` : ""),
-    ...(pages.length === 0 ? ["No pages listed yet."] : [...shown, ...more]),
+    // Before the pages, which can run to a hundred lines.
+    ...datasets(s, published),
+    ...(pages.length === 0 ? ["No pages listed yet."] : ["Pages:", ...shown, ...more]),
   ];
 }
 
@@ -243,8 +277,13 @@ export async function listSites(client: NectrClient): Promise<CallToolResult> {
     if (sites.length === 0) {
       return text("The user has no sites in nectr, so scan_page won't include markdown for any page.");
     }
-    const pages = await Promise.all(sites.map((s) => client.pages(s.id)));
-    const sections = sites.map((s, i) => site(s, pages[i]!));
+    const [pages, published] = await Promise.all([
+      Promise.all(sites.map((s) => client.pages(s.id))),
+      // Datasets are extra: a nectr without Publish, or one that refuses the
+      // request, leaves them out rather than failing the whole list.
+      Promise.all(sites.map((s) => client.datasets(s.id).catch(() => null))),
+    ]);
+    const sections = sites.map((s, i) => site(s, pages[i]!, published[i]!));
     return text([`# The user's sites in nectr`, ...sections.map((s) => s.join("\n"))].join("\n\n"));
   } catch (err) {
     return failure(err);
@@ -294,8 +333,9 @@ export function registerTools(server: McpServer, client: NectrClient): void {
     {
       title: "List the user's sites and pages",
       description:
-        "List the user's sites in nectr and the URLs of their pages, with whether each site is verified. " +
-        "scan_page includes the markdown only for pages on these verified sites.",
+        "List the user's sites in nectr and the URLs of their pages, with whether each site is verified, and " +
+        "the datasets the user has published from each site (tables, lists, structured data or whole pages, " +
+        "with their JSON and CSV addresses). scan_page includes the markdown only for pages on these verified sites.",
       inputSchema: {},
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

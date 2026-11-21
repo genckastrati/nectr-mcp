@@ -1,7 +1,8 @@
 /**
  * A thin client over the public nectr API (`/api/v1`), authenticated with an
  * `nct_` API key. It uses the scan endpoint (nectr.ch/docs#scan) and the key
- * holder's sites and their pages; this package adds no new server-side surface.
+ * holder's sites, their pages and their published datasets, all read-only;
+ * this package adds no new server-side surface.
  */
 
 export interface RobotsRule {
@@ -97,6 +98,22 @@ export interface SitePage {
   copy_url: string | null;
 }
 
+/** A dataset the key holder published from a site, as `GET /api/v1/sites/{id}/datasets` returns it (the fields this package uses). */
+export interface SiteDataset {
+  name: string;
+  /** "table", "list", "structured" (what the page declares as data) or "content" (the whole page). */
+  kind: string;
+  page_url: string;
+  title: string | null;
+  /** False when it was no longer on its page at the last fetch: its addresses answer not found. */
+  found: boolean;
+  /** When it is deleted if it is still missing at a fetch from then on. Null while found. */
+  deleted_after?: string | null;
+  json_url: string;
+  /** Null for structured data and page content, which are JSON only. */
+  csv_url: string | null;
+}
+
 /** An HTTP error from nectr, carrying what a caller needs to explain it. */
 export class NectrApiError extends Error {
   constructor(
@@ -114,6 +131,18 @@ export class NectrUnreachableError extends Error {
   constructor(readonly siteUrl: string, cause: unknown) {
     super(`Could not reach nectr at ${siteUrl}`, { cause });
     this.name = "NectrUnreachableError";
+  }
+}
+
+/**
+ * nectr was reached but didn't answer in time. Not the same as unreachable:
+ * a scan of a page with large linked PDFs can take this long, and trying once
+ * more may work.
+ */
+export class NectrTimeoutError extends Error {
+  constructor(readonly siteUrl: string, readonly seconds: number) {
+    super(`nectr at ${siteUrl} didn't answer within ${seconds} seconds`);
+    this.name = "NectrTimeoutError";
   }
 }
 
@@ -160,6 +189,10 @@ export class NectrClient {
     return this.request<SitePage[]>("GET", `/sites/${encodeURIComponent(siteId)}/pages`);
   }
 
+  datasets(siteId: string): Promise<SiteDataset[]> {
+    return this.request<SiteDataset[]>("GET", `/sites/${encodeURIComponent(siteId)}/datasets`);
+  }
+
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res: Response;
     try {
@@ -176,6 +209,10 @@ export class NectrClient {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (err) {
+      // AbortSignal.timeout aborts with a DOMException named "TimeoutError".
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new NectrTimeoutError(this.siteUrl, TIMEOUT_MS / 1000);
+      }
       throw new NectrUnreachableError(this.siteUrl, err);
     }
 
@@ -223,6 +260,12 @@ function parseRetryAfter(res: Response): number | null {
 export function describeError(err: unknown): string {
   if (err instanceof NectrUnreachableError) {
     return `Could not reach nectr at ${err.siteUrl}. Check the network or NECTR_URL; retrying immediately is unlikely to help.`;
+  }
+  if (err instanceof NectrTimeoutError) {
+    return (
+      `nectr at ${err.siteUrl} didn't answer within ${err.seconds} seconds, so the request was abandoned. ` +
+      "nectr was reached; a page with large linked PDFs can take this long to scan. Trying once more may work."
+    );
   }
   if (err instanceof NectrRedirectError) {
     const to = err.location ? ` to ${err.location}` : "";

@@ -84,6 +84,24 @@ export function siteResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A dataset as `GET /sites/{id}/datasets` returns it. */
+export function datasetResult(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "dataset-1",
+    name: "opening-hours",
+    kind: "table",
+    page_url: "https://example.com/contact",
+    title: "Opening hours",
+    found: true,
+    created_at: "2026-11-21T09:00:00Z",
+    missing_since: null,
+    deleted_after: null,
+    json_url: "https://nectr.test/s/example.com/datasets/opening-hours.json",
+    csv_url: "https://nectr.test/s/example.com/datasets/opening-hours.csv",
+    ...overrides,
+  };
+}
+
 /** A page as `GET /sites/{id}/pages` returns it. */
 export function pageResult(overrides: Record<string, unknown> = {}) {
   return {
