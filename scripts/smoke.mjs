@@ -49,6 +49,15 @@ if (!process.env.NECTR_API_KEY) {
   console.error("Set NECTR_API_KEY to one of your nct_ keys (nectr → Settings → API keys).");
   process.exit(2);
 }
+// The server's own rule (src/config.ts): checked here too, so a placeholder
+// or a key pasted with quotes or brackets gets a sentence, not a crash.
+if (!process.env.NECTR_API_KEY.trim().startsWith("nct_")) {
+  console.error(
+    "NECTR_API_KEY doesn't start with nct_. Use the key itself, without quotes or angle brackets " +
+      "(nectr → Settings → API keys).",
+  );
+  process.exit(2);
+}
 
 // Without a key the server must refuse to start, and say why.
 {
@@ -72,7 +81,15 @@ const transport = new StdioClientTransport({
   stderr: "inherit",
 });
 const client = new Client({ name: "nectr-mcp-smoke", version: "1" });
-await client.connect(transport);
+try {
+  await client.connect(transport);
+} catch (err) {
+  // The server exited before answering; its own message is printed above
+  // (stderr is inherited).
+  fail("server starts with your key", `it exited before answering (${err instanceof Error ? err.message : err}); its message is above`);
+  console.log(`\n${failed} check(s) failed.`);
+  process.exit(1);
+}
 
 async function call(name, args = {}) {
   const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 });
