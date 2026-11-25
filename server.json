@@ -1,0 +1,38 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.genckastrati/nectr-mcp",
+  "title": "nectr",
+  "description": "Scan any public page the way AI reads it, and list your nectr sites, pages and datasets.",
+  "websiteUrl": "https://nectr.ch/docs#mcp",
+  "repository": {
+    "url": "https://github.com/genckastrati/nectr-mcp",
+    "source": "github"
+  },
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "nectr-mcp",
+      "version": "0.5.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NECTR_API_KEY",
+          "description": "Your nectr API key (starts with nct_), from Settings → API keys on nectr.ch",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "NECTR_URL",
+          "description": "Another nectr instance's https address; defaults to https://nectr.ch",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

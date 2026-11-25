@@ -169,12 +169,16 @@ Then `/mcp` in a session lists it. `claude mcp remove nectr-dev` takes it out ag
 ### Publishing
 
 ```bash
-npm version patch      # or minor / major; also bump VERSION in src/server.ts and USER_AGENT in src/client.ts
+npm version patch      # or minor / major; also bump VERSION in src/server.ts and USER_AGENT in src/client.ts,
+                       # and both versions in server.json
 npm run build && NECTR_API_KEY=nct_... npm run smoke   # every check PASS or SKIP
 npm publish            # prepublishOnly runs typecheck, tests and build first
+mcp-publisher publish  # then list that version in the MCP Registry
 ```
 
 npm refuses to publish from an account without two-factor authentication (error `E403`). Enable it under your npm account settings; `npm publish` then asks you to confirm in the browser or with `--otp=<code>`.
+
+**The [MCP Registry](https://registry.modelcontextprotocol.io)** lists the server as `io.github.genckastrati/nectr-mcp`, from `server.json`. It checks ownership through `mcpName` in the published `package.json`, which must equal `server.json`'s `name`, so publish to npm first. `server.json`'s `version` and its package's `version` both follow `package.json`'s; a published registry version can't be changed. `mcp-publisher` comes from Homebrew (`brew install mcp-publisher`); sign in once with `mcp-publisher login github` as the account that owns this repository, and check `server.json` with `mcp-publisher validate`.
 
 ## License
 
