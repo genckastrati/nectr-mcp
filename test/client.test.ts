@@ -16,7 +16,7 @@ describe("NectrClient", () => {
     const { client, calls } = fakeApi({ "POST /scans": () => json(200, scanResult()) });
     await client.scan("https://example.com/pricing");
     expect(calls[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
-    expect(calls[0]!.headers["user-agent"]).toBe("nectr-mcp/0.5.0");
+    expect(calls[0]!.headers["user-agent"]).toBe("nectr-mcp/0.5.1");
   });
 
   it("reads the key holder's sites and a site's pages", async () => {
